@@ -1,0 +1,19 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="160" height="160" viewBox="0 0 160 160" role="img" aria-labelledby="title description">
+  <title id="title">Crucible mark</title>
+  <desc id="description">A flame rising from a crucible with a terminal prompt on its front.</desc>
+  <defs>
+    <linearGradient id="fire" x1="80" y1="14" x2="80" y2="85" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#fbbf24"/>
+      <stop offset="1" stop-color="#f97316"/>
+    </linearGradient>
+    <linearGradient id="vessel" x1="80" y1="84" x2="80" y2="140" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#334155"/>
+      <stop offset="1" stop-color="#0f172a"/>
+    </linearGradient>
+  </defs>
+  <path d="M82 14c3 14-6 21-6 30 0 6 4 10 9 12 4-8 9-13 8-22 14 12 22 22 22 33 0 9-7 16-17 18H65C54 82 47 74 47 64c0-13 9-24 18-32-2 12 0 19 6 23-3-15 11-24 11-41Z" fill="url(#fire)"/>
+  <path d="M37 84h86l-10 41c-2 9-9 15-18 15H65c-9 0-16-6-18-15Z" fill="url(#vessel)"/>
+  <rect x="28" y="76" width="104" height="10" rx="5" fill="#0f172a"/>
+  <rect x="57" y="140" width="46" height="8" rx="4" fill="#0f172a"/>
+  <path d="m61 101 11 10-11 10m23 0h15" fill="none" stroke="#f8fafc" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

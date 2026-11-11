@@ -1,0 +1,26 @@
+{
+  "analyzers": {
+    "core": {
+      "enabled": true,
+      "verbose": false,
+      "rules": {
+        "use-recent-api-versions": {
+          "level": "warning",
+          "maxAgeInDays": 365
+        },
+        "use-stable-resource-identifiers": {
+          "level": "error"
+        },
+        "secure-secrets-in-params": {
+          "level": "error"
+        },
+        "outputs-should-not-contain-secrets": {
+          "level": "error"
+        },
+        "no-unused-params": {
+          "level": "error"
+        }
+      }
+    }
+  }
+}

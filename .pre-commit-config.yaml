@@ -1,0 +1,51 @@
+default_stages: [manual]
+
+repos:
+  - repo: local
+    hooks:
+      - id: ruff-format
+        name: Ruff format check
+        entry: uv run ruff format --check .
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: ruff-check
+        name: Ruff lint check
+        entry: uv run ruff check .
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: basedpyright
+        name: basedpyright strict type check
+        entry: uv run basedpyright
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: pytest
+        name: pytest with branch coverage
+        entry: >-
+          uv run pytest
+          --cov=crucible
+          --cov-branch
+          --cov-fail-under=100
+          --cov-report=term-missing:skip-covered
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: gitleaks-scan
+        name: Gitleaks secret scan
+        entry: gitleaks dir --no-banner --redact .
+        language: system
+        pass_filenames: false
+        always_run: true
+
+      - id: osv-scanner
+        name: OSV dependency audit
+        entry: osv-scanner scan --lockfile=uv.lock
+        language: system
+        pass_filenames: false
+        always_run: true

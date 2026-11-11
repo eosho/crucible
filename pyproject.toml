@@ -1,0 +1,128 @@
+[project]
+name = "crucible"
+version = "0.1.0"
+description = "Customer-hosted Azure development workspaces."
+readme = "README.md"
+requires-python = ">=3.12"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["azure", "development", "sandboxes", "uv"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Typing :: Typed",
+]
+dependencies = [
+    "azure-containerapps-sandbox==0.1.0b4",
+    "azure-identity>=1.27.0,<2",
+]
+
+[project.scripts]
+crucible = "crucible.cli:main"
+
+[dependency-groups]
+dev = [
+    "basedpyright>=1.39.10",
+    "prek>=0.4.14",
+    "pytest>=9.1.1",
+    "pytest-cov>=7.1.0",
+    "ruff>=0.16.4",
+]
+
+[build-system]
+requires = ["hatchling>=1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.sdist]
+include = ["/LICENSE", "/README.md", "/docs", "/infra", "/pyproject.toml", "/src", "/tests"]
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/crucible"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"infra/main.bicep" = "crucible/infra/main.bicep"
+"infra/types.bicep" = "crucible/infra/types.bicep"
+"infra/bicepconfig.json" = "crucible/infra/bicepconfig.json"
+"infra/modules" = "crucible/infra/modules"
+
+[tool.ruff]
+extend-exclude = [".agents", "*.ipynb", "tests"]
+force-exclude = true
+include = ["pyproject.toml", "src/**/*.py", "src/**/*.pyi"]
+line-length = 100
+target-version = "py312"
+src = ["src"]
+
+[tool.ruff.lint]
+select = [
+    "A", "ANN", "ARG", "ASYNC", "B", "BLE", "C4", "C90", "D", "DTZ", "E", "ERA",
+    "F", "FBT", "FAST", "FIX", "FLY", "FURB", "G", "LOG", "I", "N", "PERF", "PGH",
+    "PIE", "PL", "PTH", "PT", "Q", "RET", "RSE", "RUF", "S", "SIM", "SLF", "T10",
+    "T20", "TID", "TRY", "UP", "W", "YTT",
+]
+ignore = ["E501"]
+
+[tool.ruff.lint.mccabe]
+max-complexity = 10
+
+[tool.ruff.lint.per-file-ignores]
+"**/*.pyi" = ["D"]
+
+[tool.ruff.lint.pydocstyle]
+convention = "google"
+
+[tool.ruff.lint.pylint]
+max-args = 7
+max-branches = 10
+max-nested-blocks = 3
+
+[tool.ruff.format]
+docstring-code-format = true
+
+[tool.basedpyright]
+failOnWarnings = true
+pythonVersion = "3.12"
+strictGenericNarrowing = true
+typeCheckingMode = "strict"
+include = ["src", "tests"]
+exclude = [
+    "**/__pycache__",
+    ".pytest_cache",
+    ".ruff_cache",
+    ".venv",
+    "build",
+    "dist",
+]
+reportAny = "error"
+reportExplicitAny = "error"
+reportIgnoreCommentWithoutRule = "error"
+reportImplicitOverride = "error"
+reportImplicitStringConcatenation = "error"
+reportImportCycles = "error"
+reportPrivateLocalImportUsage = "error"
+reportUnannotatedClassAttribute = "error"
+reportUnnecessaryTypeIgnoreComment = "error"
+reportUnreachable = "error"
+reportUnusedCallResult = "error"
+
+[tool.pytest]
+minversion = "9.0"
+testpaths = ["tests"]
+addopts = ["--strict-config", "--strict-markers", "--tb=short", "-q"]
+filterwarnings = ["error"]
+xfail_strict = true
+
+[tool.coverage.run]
+branch = true
+source = ["crucible"]
+
+[tool.coverage.report]
+fail_under = 100
+show_missing = true
+skip_covered = true

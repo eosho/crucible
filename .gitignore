@@ -1,0 +1,12 @@
+node_modules/
+__pycache__/
+*.pyc
+.env
+.env.*
+**/.npmrc
+infra/main.json
+infra/parameters/*.local.bicepparam
+infra/parameters/*.json
+.venv/
+dist/
+*.egg-info/

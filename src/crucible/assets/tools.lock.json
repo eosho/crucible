@@ -1,0 +1,35 @@
+{
+  "code": {
+    "version": "1.145.3",
+    "amd64": {
+      "url": "https://vscode.download.prss.microsoft.com/dbazure/download/stable/dcd3ad6e368fbe19d03f37054a40dbaf40d676f4/vscode_cli_linux_x64_cli.tar.gz",
+      "sha256": "9e1ca71f9d17adc98731aa4b9f72b5af6254e7936042f1e9414f27babbdf89e1"
+    },
+    "arm64": {
+      "url": "https://vscode.download.prss.microsoft.com/dbazure/download/stable/dcd3ad6e368fbe19d03f37054a40dbaf40d676f4/vscode_cli_linux_arm64_cli.tar.gz",
+      "sha256": "bf142a5f521bfbf382956c74a3f5eea17002e77673db2b5ec7fb35b18c6e2da6"
+    }
+  },
+  "apm": {
+    "version": "0.35.0",
+    "amd64": {
+      "url": "https://github.com/microsoft/apm/releases/download/v0.35.0/apm-linux-x86_64.tar.gz",
+      "sha256": "5aa23ce61eebae9411668f507772cdb5d87252c760078dc59b5acdc5188d785b"
+    },
+    "arm64": {
+      "url": "https://github.com/microsoft/apm/releases/download/v0.35.0/apm-linux-arm64.tar.gz",
+      "sha256": "ada8901ce1b29e5d188629eeed64e8499853a8cb5f047630ebedbde24008508e"
+    }
+  },
+  "prek": {
+    "version": "0.4.14",
+    "amd64": {
+      "url": "https://github.com/j178/prek/releases/download/v0.4.14/prek-x86_64-unknown-linux-gnu.tar.gz",
+      "sha256": "d1eacb826b9f71ce9098636d2c3e96df0ed1cf08c9c17c57bf358b401f5a995d"
+    },
+    "arm64": {
+      "url": "https://github.com/j178/prek/releases/download/v0.4.14/prek-aarch64-unknown-linux-gnu.tar.gz",
+      "sha256": "a0302d10599f40eb1b46bfe28cfe04c2638f0af858787d21c5904acc8047aaff"
+    }
+  }
+}
