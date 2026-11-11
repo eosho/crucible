@@ -18,20 +18,15 @@
 <a id="status"></a>
 
 > [!WARNING]
-> Crucible is a proof of concept and isn't ready for production use.
-> Deployment settings and CLI behavior may change. Test in an approved
-> subscription and review each plan before applying it.
+> Experimental; not production-ready. Settings and CLI behavior may change.
+> Use an approved subscription and review plans before applying.
 
-Crucible creates development workspaces in a customer's Azure subscription using
-Azure Container Apps Sandboxes. Each workspace has a shared toolchain and
-authenticated remote access.
+Deploy Crucible into each customer's approved Azure subscription to create
+development workspaces on Azure Container Apps Sandboxes.
 
-Deploy it separately into each customer's approved subscription.
-
-Bicep creates the infrastructure and assigns RBAC roles. The Python CLI manages
-workspaces and persistent disks through the Azure Container Apps Sandbox SDK.
-Microsoft's `azure-dev` image supplies the base tools; bootstrap can install
-missing tools.
+Bicep powers the underlying Azure resources and RBAC. The Python CLI manages
+workspaces and persistent disks through the Azure Container Apps Sandbox SDK. Workspaces
+use Microsoft's `azure-dev` image, with bootstrap to install missing tools.
 
 ## Get started
 
@@ -44,6 +39,43 @@ uv run crucible --help
 
 Review the plan before adding `--apply`. Workspace plans read Azure deployment
 outputs; the guides below cover deployment and authentication.
+
+## Connect to your workspace
+
+After [deploying a workspace](#deploy), resume it if stopped and open its
+interactive shell in the [Sandboxes portal](https://sandboxes.azure.com/).
+Get customer approval for outbound Microsoft Dev Tunnels access before connecting.
+
+Start the tunnel **inside the sandbox**, not on your laptop:
+
+```bash
+code tunnel --name alice-dev
+```
+
+Review and accept the VS Code Server license, then follow the sign-in prompts.
+Pass `--accept-server-license-terms` only if you agree to the license.
+Keep this command running in the foreground while connected.
+After [bootstrap](docs/tools.md), open a new shell to use
+`crucible-tunnel --name alice-dev`, the
+[packaged helper](src/crucible/assets/connect-tunnel.sh).
+
+### Local VS Code (recommended)
+
+1. Install the [Remote - Tunnels extension](https://marketplace.visualstudio.com/items?itemName=ms-vscode.remote-server)
+   in VS Code on your laptop.
+2. Open the Command Palette and run **Remote Tunnels: Connect to Tunnel**.
+3. Sign in with the same account used to start the tunnel and select `alice-dev`.
+4. Open `/workspaces` or your project folder beneath it.
+
+### Browser with vscode.dev
+
+Open the `vscode.dev` URL printed by the tunnel command. Sign in with the same
+account and open `/workspaces` or your project folder.
+
+Both options connect to the same sandbox without a public SSH endpoint.
+Keep project files under `/workspaces` so they persist on the Data Disk.
+After a stop/resume, restart the tunnel and reconnect. See
+[workspace lifecycle and access](docs/workspaces.md) for idle suspension and permissions.
 
 ## CLI
 

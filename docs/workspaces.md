@@ -115,15 +115,8 @@ ownership.
 
 ## Connect remotely
 
-Run `code tunnel --name alice-dev` in the sandbox's interactive shell.
-After bootstrap, open a new shell to use `crucible-tunnel --name alice-dev`,
-the [packaged helper](../src/crucible/assets/connect-tunnel.sh).
-
-Get customer approval for Microsoft Dev Tunnels, review the license, and sign in
-interactively. Pass `--accept-server-license-terms` only if you agree to the license.
-Open the printed `vscode.dev` URL with the same account, or use VS Code Remote - Tunnels.
-Keep the outbound tunnel process running in the foreground. Restart it after
-Disk suspension. Crucible doesn't configure a public SSH endpoint.
+Follow the [README connection guide](../README.md#connect-to-your-workspace)
+for local VS Code (recommended) or browser access.
 
 Azure RBAC, repository access, and Copilot entitlement are separate permissions.
 Store secrets in protected user configuration or an approved secret store.
