@@ -1,12 +1,74 @@
-node_modules/
+# Python environments and bytecode
 __pycache__/
-*.pyc
+*.py[cod]
+.venv/
+/venv/
+/env/
+.python_history
+
+# Tool caches and test reports
+.cache/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+coverage.xml
+coverage.json
+htmlcov/
+/test-results/
+/junit.xml
+
+# Package builds
+/build/
+/dist/
+*.egg-info/
+.eggs/
+
+# Local configuration and credentials
 .env
 .env.*
-**/.npmrc
-infra/main.json
-infra/parameters/*.local.bicepparam
-infra/parameters/*.json
-.venv/
-dist/
-*.egg-info/
+!.env.example
+!.env.sample
+!.env.template
+*.local.bicepparam
+.azure/
+.ssh/
+.npmrc
+.pypirc
+.netrc
+*.key
+*.pem
+*.pfx
+*.p12
+
+# Compiled Bicep output; keep compiler configuration as source
+/infra/main.json
+/infra/types.json
+/infra/modules/**/*.json
+/infra/parameters/**/*.json
+!/infra/**/bicepconfig.json
+
+# Workspace bootstrap and local npm tooling
+.crucible/
+node_modules/
+.npm/
+npm-debug.log*
+
+# Editor state and backups; shared .vscode files remain trackable
+.idea/
+.history/
+/.vscode/*.local.json
+*.local.code-workspace
+*.swp
+*.swo
+*~
+*.bak
+*.tmp
+
+# Logs and operating-system metadata
+*.log
+*.log.*
+.DS_Store
+Thumbs.db
+Desktop.ini

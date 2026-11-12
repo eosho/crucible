@@ -122,11 +122,4 @@ Azure RBAC, repository access, and Copilot entitlement are separate permissions.
 Store secrets in protected user configuration or an approved secret store.
 Don't put them in command arguments, images, Git, or Bicep parameters.
 
-## Validate customer readiness
-
-Before customer use, check:
-
-- Image startup, tool setup, and disk ownership.
-- Private DNS, access to private services, and egress restrictions.
-- Editor and agent connections, access boundaries, and persistence after suspend/resume.
-- Time to a usable workspace and ongoing costs.
+For private-access tests and customer-readiness checks, see [Validation](validation.md).

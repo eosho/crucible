@@ -28,6 +28,38 @@ Bicep powers the underlying Azure resources and RBAC. The Python CLI manages
 workspaces and persistent disks through the Azure Container Apps Sandbox SDK. Workspaces
 use Microsoft's `azure-dev` image, with bootstrap to install missing tools.
 
+## Architecture
+
+```mermaid
+flowchart LR
+    cli["Crucible CLI"]
+    bicep["Azure CLI + Bicep"]
+    sdk["Sandbox SDK"]
+    editor["Local VS Code (recommended)<br/>or vscode.dev"]
+    tunnels["Microsoft Dev Tunnels"]
+
+    subgraph customer["Customer Azure subscription"]
+        subgraph group["Sandbox group"]
+            sandbox["Developer sandbox<br/>VS Code Server + tools"]
+            disk[("Persistent Data Disk<br/>/workspaces")]
+        end
+        network["VNet connection"]
+        services["Private customer services"]
+    end
+
+    cli -.-> bicep
+    cli -.-> sdk
+    bicep -. "ARM resources + RBAC" .-> group
+    sdk -. "Workspaces, disks, bootstrap" .-> sandbox
+    editor <-->|Authenticated session| tunnels
+    sandbox -->|Outbound tunnel| tunnels
+    sandbox --- disk
+    sandbox --> network --> services
+```
+
+Dashed arrows show provisioning. Code runs in the sandbox; private service access
+still requires the right DNS, routes, firewall rules, and permissions.
+
 ## Get started
 
 With Python 3.12+ and uv installed, run:
@@ -54,10 +86,29 @@ code tunnel --name alice-dev
 
 Review and accept the VS Code Server license, then follow the sign-in prompts.
 Pass `--accept-server-license-terms` only if you agree to the license.
-Keep this command running in the foreground while connected.
+The tunnel runs in the foreground; closing the portal shell can disconnect it.
 After [bootstrap](docs/tools.md), open a new shell to use
 `crucible-tunnel --name alice-dev`, the
 [packaged helper](src/crucible/assets/connect-tunnel.sh).
+
+### Keep the tunnel running after closing the shell
+
+Run inside the sandbox. Requires `tmux`, which bootstrap doesn't install.
+Stop any existing tunnel first.
+
+```bash
+tmux new -s tunnel 'code tunnel --name alice-dev'
+```
+
+After license acceptance and sign-in:
+
+- **Detach:** Press **Ctrl+B**, then **D**. You can close the portal shell.
+- **Reattach:** `tmux attach -t tunnel`.
+- **Stop:** Press **Ctrl+C** while attached, or run `tmux kill-session -t tunnel`
+  from another sandbox shell. This disconnects VS Code; files and the sandbox remain.
+
+`tmux` doesn't survive sandbox suspension or disable
+[idle auto-suspend](docs/workspaces.md#keep-a-workspace-running).
 
 ### Local VS Code (recommended)
 
@@ -139,7 +190,8 @@ Use the optional [Dev Container](docs/development.md#dev-container) to work on C
 ## Guides
 
 - [Infrastructure](docs/infrastructure.md): deployment, networking, RBAC, workspace inventory.
-- [Workspaces](docs/workspaces.md): persistent disks, lifecycle, remote access, verification status.
+- [Workspaces](docs/workspaces.md): persistent disks, lifecycle, remote access.
+- [Validation](docs/validation.md): private-access tests and customer-readiness checks.
 - [Tools](docs/tools.md): Bootstrapped tools and default image.
 - [Development](docs/development.md): prerequisites, local checks, code conventions.
 
