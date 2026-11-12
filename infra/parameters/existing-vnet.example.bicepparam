@@ -7,8 +7,8 @@ param network = {
   mode: 'existingVnet'
   resourceGroupName: 'rg-customer-network'
   virtualNetworkName: 'customer-dev'
-  subnetName: 'crucible'
-  subnetAddressPrefix: '10.42.2.0/23'
+  acaSubnetName: 'crucible'
+  acaSubnetAddressPrefix: '10.42.2.0/23'
 }
 
 param dataOwnerAssignments = []

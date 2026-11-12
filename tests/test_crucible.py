@@ -13,6 +13,7 @@ from azure.containerapps.sandbox import (
     ApiVersion,
     AutoDeletePolicy,
     AutoSuspendPolicy,
+    AzureBlobByoManagedIdentityAuth,
     ExecResult,
     LifecyclePolicy,
     Sandbox,
@@ -22,13 +23,13 @@ from azure.containerapps.sandbox import (
 )
 from azure.core.exceptions import AzureError, HttpResponseError
 
-from crucible import cli
+from crucible import cli, deployment, workspaces
 from crucible.bootstrap import bootstrap_tools
 
 
 class CliTests(unittest.TestCase):
     def setUp(self):
-        self.enterContext(patch.object(cli.shutil, "which", return_value="/tools/az"))
+        self.enterContext(patch.object(deployment.shutil, "which", return_value="/tools/az"))
         root_logger = cli.logging.getLogger()
         self.enterContext(patch.object(root_logger, "handlers", []))
         self.addCleanup(root_logger.setLevel, root_logger.level)
@@ -46,16 +47,24 @@ class CliTests(unittest.TestCase):
             "autoSuspendEnabled": True,
             "image": "azure-dev", "workspaces": [],
             "bootstrapTools": False,
+            "storageIdentityEnabled": False,
         }
         self.group_exists = True
-        self.compiled_inputs = {"location": {"value": "eastus"}}
+        self.compiled_inputs = {
+            "location": {"value": "eastus"},
+            "network": {"value": {
+                "mode": "newVnet", "virtualNetworkName": "test-network",
+                "addressPrefix": "10.44.0.0/16", "acaSubnetName": "sandboxes",
+                "acaSubnetAddressPrefix": "10.44.0.0/23",
+            }},
+        }
         self.deployed_inputs = None
         self.run = self.enterContext(patch.object(
-            cli.subprocess, "run",
+            deployment.subprocess, "run",
             side_effect=self.azure_response,
         ))
-        self.credential = self.enterContext(patch.object(cli, "AzureCliCredential"))
-        self.constructor = self.enterContext(patch.object(cli, "SandboxGroupClient"))
+        self.credential = self.enterContext(patch.object(workspaces, "AzureCliCredential"))
+        self.constructor = self.enterContext(patch.object(workspaces, "SandboxGroupClient"))
         self.client = MagicMock(spec=SandboxGroupClient)
         self.constructor.return_value.__enter__.return_value = self.client
         self.client.list_sandboxes.return_value = []
@@ -68,7 +77,15 @@ class CliTests(unittest.TestCase):
     def azure_response(self, command, **kwargs):
         if command[1:3] == ["bicep", "build-params"]:
             value = {
-                "templateJson": json.dumps({"$schema": "subscriptionDeploymentTemplate.json"}),
+                "templateJson": json.dumps({
+                    "$schema": "subscriptionDeploymentTemplate.json",
+                    "parameters": {
+                        "workspaces": {"defaultValue": []},
+                        "workspaceBootstrapTools": {"defaultValue": False},
+                        "workspaceBlobStorage": {"nullable": True},
+                        "network": {},
+                    },
+                }),
                 "parametersJson": json.dumps({"parameters": self.compiled_inputs}),
             }
         elif command[1:3] == ["group", "exists"]:
@@ -94,61 +111,308 @@ class CliTests(unittest.TestCase):
 
     def declare_workspaces(self):
         self.settings["workspaces"] = [
-            {"name": "alice-dev", "diskSize": "20Gi"},
-            {"name": "bob-dev", "diskSize": "30Gi"},
+            {"name": "alice-dev", "storage": {"type": "DataDisk", "size": "20Gi"}},
+            {"name": "bob-dev", "storage": {"type": "DataDisk", "size": "30Gi"}},
         ]
 
-    def test_new_workspaces_bootstrap_only_when_configured(self):
+    def declare_blob_workspace(self, volume_type="AzureBlob", read_only=False):
+        storage = {"type": volume_type, "readOnly": read_only}
+        if volume_type == "AzureBlobByo":
+            storage["storageContainerResourceId"] = (
+                "/subscriptions/00000000-0000-0000-0000-000000000000"
+                "/resourceGroups/customer-storage/providers/Microsoft.Storage"
+                "/storageAccounts/customerdata/blobServices/default/containers/datasets"
+            )
+            self.settings["storageIdentityEnabled"] = True
+        self.settings["workspaces"] = [{"name": "alice-dev", "storage": storage}]
+        return storage
+
+    def test_blob_volumes_use_the_correct_sdk_payload_and_mount_access(self):
+        for volume_type in ("AzureBlob", "AzureBlobByo"):
+            for read_only in (False, True):
+                with self.subTest(volume_type=volume_type, read_only=read_only):
+                    self.client.reset_mock()
+                    self.sandbox.reset_mock()
+                    storage = self.declare_blob_workspace(volume_type, read_only)
+                    self.assertEqual(self.invoke("workspace provision"), 0)
+                    self.assert_no_mutations()
+                    self.assertEqual(self.invoke("workspace provision", "--apply"), 0)
+                    self.client.create_volume.assert_called_once()
+                    creation = self.client.create_volume.call_args
+                    self.assertEqual(creation.args, ("alice-dev-data",))
+                    self.assertEqual(creation.kwargs["type"], volume_type)
+                    self.assertIsNone(creation.kwargs["size"])
+                    if volume_type == "AzureBlobByo":
+                        self.assertEqual(
+                            creation.kwargs["storage_container_resource_id"],
+                            storage["storageContainerResourceId"],
+                        )
+                        self.assertEqual(creation.kwargs["auth"]._to_dict(), {
+                            "kind": "ManagedIdentity", "identity": {"kind": "SystemAssigned"},
+                        })
+                    else:
+                        self.assertIsNone(creation.kwargs["storage_container_resource_id"])
+                        self.assertIsNone(creation.kwargs["auth"])
+                    mount = self.client.begin_create_sandbox.call_args.kwargs["volumes"][0]
+                    self.assertEqual(mount._to_dict(), {
+                        "volumeName": "alice-dev-data", "mountpoint": "/workspaces",
+                        "readOnly": read_only,
+                    })
+                    self.assertFalse(
+                        self.sandbox.set_lifecycle_policy.call_args.args[0].auto_delete.enabled
+                    )
+
+    def test_byob_requires_private_network_and_identity_before_changes(self):
+        self.declare_blob_workspace("AzureBlobByo")
         self.settings["bootstrapTools"] = True
-        self.declare_workspaces()
-        with patch.object(cli, "bootstrap_tools") as bootstrap:
-            self.assertEqual(self.invoke("workspace provision"), 0)
-            bootstrap.assert_not_called()
-            self.assertEqual(self.invoke("workspace provision", "--apply"), 0)
-            self.assertEqual(bootstrap.call_count, 2)
+        self.settings["storageIdentityEnabled"] = False
+        self.compiled_inputs.update({
+            "workspaces": {"value": self.settings["workspaces"]},
+            "workspaceBootstrapTools": {"value": True},
+        })
+        self.assertEqual(self.invoke(
+            "deploy", "--parameters", str(self.parameters), "--apply",
+        ), 2)
+        self.assertIsNone(self.deployed_inputs)
+        self.assertEqual(self.invoke("workspace provision", "--apply"), 1)
+        self.constructor.assert_not_called()
+        self.assert_no_mutations()
+
+    def test_all_in_deploy_accepts_bicep_provisioned_private_blob_storage(self):
+        self.declare_blob_workspace("AzureBlobByo", read_only=True)
+        self.settings["bootstrapTools"] = True
+        self.compiled_inputs.update({
+            "workspaces": {"value": [
+                {"name": "alice-dev", "storage": {"type": "AzureBlobByo", "readOnly": True}}
+            ]},
+            "workspaceBootstrapTools": {"value": True},
+        })
+        self.compiled_inputs["network"]["value"].update({
+            "privateEndpointSubnetName": "private",
+            "privateEndpointSubnetAddressPrefix": "10.44.2.0/27",
+        })
+        with patch.object(workspaces, "bootstrap_tools") as bootstrap:
+            self.assertEqual(self.invoke(
+                "deploy", "--parameters", str(self.parameters), "--apply",
+            ), 0)
+            bootstrap.assert_called_once_with(self.sandbox)
+        self.assertIsNotNone(self.deployed_inputs)
+        self.assertEqual(self.client.create_volume.call_args.kwargs["type"], "AzureBlobByo")
+        self.assertTrue(self.client.begin_create_sandbox.call_args.kwargs["volumes"][0].read_only)
+
+    def test_invalid_private_endpoint_subnet_is_rejected_before_deployment(self):
+        for changes in (
+            {"privateEndpointSubnetName": "private"},
+            {"privateEndpointSubnetAddressPrefix": "10.44.2.0/27"},
+            {"privateEndpointSubnetName": "private", "privateEndpointSubnetAddressPrefix": "10.42.2.0/27"},
+            {"privateEndpointSubnetName": "private", "privateEndpointSubnetAddressPrefix": "10.44.0.0/27"},
+            {"privateEndpointSubnetName": "sandboxes", "privateEndpointSubnetAddressPrefix": "10.44.2.0/27"},
+        ):
+            with self.subTest(changes=changes):
+                original = self.compiled_inputs["network"]["value"].copy()
+                self.compiled_inputs["network"]["value"].update(changes)
+                self.assertEqual(self.invoke(
+                    "deploy", "--parameters", str(self.parameters), "--apply",
+                ), 2)
+                self.assertIsNone(self.deployed_inputs)
+                self.constructor.assert_not_called()
+                self.compiled_inputs["network"]["value"] = original
+
+    def test_invalid_storage_definitions_are_not_treated_as_data_disks(self):
+        for storage in (
+            None, {}, {"type": "Unknown"}, {"type": "DataDisk", "size": "0Gi"},
+            {"type": "DataDisk", "size": "20Gi", "readOnly": False},
+            {"type": "AzureBlob"}, {"type": "AzureBlob", "readOnly": "false"},
+            {"type": "AzureBlob", "readOnly": False, "size": "20Gi"},
+            {"type": "AzureBlobByo", "readOnly": True},
+            {"type": "AzureBlobByo", "readOnly": True,
+             "storageContainerResourceId": "https://customerdata.blob.core.windows.net/datasets"},
+        ):
+            with self.subTest(storage=storage):
+                self.settings["workspaces"] = [{"name": "alice-dev", "storage": storage}]
+                self.assertEqual(self.invoke("workspace provision", "--apply"), 1)
+                self.constructor.assert_not_called()
+                self.assert_no_mutations()
+
+    def test_existing_blob_workspace_keeps_its_storage_and_does_not_restart(self):
+        self.declare_blob_workspace()
+        labels = {
+            "managed-by": "crucible", "workspace": "alice-dev",
+            "name": "alice-dev", "volume": "alice-dev-data",
+        }
+        for volume_type in ("AzureBlob", "AzureBlobByo"):
+            with self.subTest(volume_type=volume_type):
+                self.client.list_volumes.return_value = [
+                    Volume(name="alice-dev-data", type=volume_type, is_attached=True,
+                           labels={"managed-by": "crucible", "workspace": "alice-dev"})
+                ]
+                self.client.list_sandboxes.return_value = [
+                    Sandbox(id="existing", state="Stopped", labels=labels,
+                            lifecycle=LifecyclePolicy(
+                                auto_suspend=AutoSuspendPolicy(mode="Disk", interval=300),
+                                auto_delete=AutoDeletePolicy(enabled=False),
+                            ))
+                ]
+                self.assertEqual(self.invoke("workspace provision", "--apply"), 0)
+                self.assert_no_mutations()
+                self.client.get_sandbox_client.assert_not_called()
+
+    def test_explicit_bootstrap_does_not_depend_on_storage_type_or_labels(self):
+        self.client.list_sandboxes.return_value = [Sandbox(id="one")]
+        for volume_type in ("DataDisk", "AzureBlob", "AzureBlobByo"):
+            with self.subTest(volume_type=volume_type):
+                self.client.get_volume.return_value = Volume(type=volume_type)
+                with patch.object(workspaces, "bootstrap_tools") as bootstrap:
+                    self.assertEqual(self.invoke(
+                        "workspace bootstrap", "--name", "alice-dev",
+                    ), 0)
+                    bootstrap.assert_not_called()
+                    self.assertEqual(self.invoke(
+                        "workspace bootstrap", "--name", "alice-dev", "--apply",
+                    ), 0)
+                    bootstrap.assert_called_once_with(self.sandbox)
+        self.client.get_volume.assert_not_called()
+        self.assert_no_mutations()
+
+    def test_existing_blob_volumes_can_be_shared_through_explicit_manual_creation(self):
+        self.settings["bootstrapTools"] = True
+        for volume_type in ("AzureBlob", "AzureBlobByo"):
+            with self.subTest(volume_type=volume_type):
+                self.client.begin_create_sandbox.reset_mock()
+                self.client.get_volume.return_value = Volume(
+                    type=volume_type, is_attached=True,
+                    storage_container_resource_id="existing-container",
+                    auth=AzureBlobByoManagedIdentityAuth(),
+                )
+                with patch.object(workspaces, "bootstrap_tools") as bootstrap:
+                    self.assertEqual(self.invoke(
+                        "workspace create", "--name", "alice-dev", "--volume", "shared",
+                        "--read-only",
+                    ), 0)
+                    self.client.begin_create_sandbox.assert_not_called()
+                    bootstrap.assert_not_called()
+                    self.assertEqual(self.invoke(
+                        "workspace create", "--name", "alice-dev", "--volume", "shared",
+                        "--read-only", "--apply",
+                    ), 0)
+                    bootstrap.assert_called_once_with(self.sandbox)
+                mount = self.client.begin_create_sandbox.call_args.kwargs["volumes"][0]
+                self.assertEqual(mount.volume_name, "shared")
+                self.assertTrue(mount.read_only)
+        self.client.create_volume.assert_not_called()
+
+    def test_manual_creation_rejects_unusable_byob_or_read_only_disk(self):
+        for volume, flags in (
+            (Volume(type="AzureBlobByo"), []),
+            (Volume(type="AzureBlobByo", storage_container_resource_id="container"), []),
+            (Volume(type="DataDisk", is_attached=False), ["--read-only"]),
+        ):
+            with self.subTest(volume=volume, flags=flags):
+                self.client.get_volume.return_value = volume
+                self.assertEqual(self.invoke(
+                    "workspace create", "--name", "alice-dev", "--volume", "existing",
+                    *flags, "--apply",
+                ), 1)
+                self.assert_no_mutations()
+
+    def test_new_workspaces_bootstrap_only_when_configured(self):
+        for volume_type in ("DataDisk", "AzureBlob", "AzureBlobByo"):
+            for enabled in (False, True):
+                with self.subTest(volume_type=volume_type, enabled=enabled):
+                    self.settings["bootstrapTools"] = enabled
+                    if volume_type == "DataDisk":
+                        self.declare_workspaces()
+                    else:
+                        self.declare_blob_workspace(volume_type, read_only=True)
+                    with patch.object(workspaces, "bootstrap_tools") as bootstrap:
+                        self.assertEqual(self.invoke("workspace provision"), 0)
+                        bootstrap.assert_not_called()
+                        self.assertEqual(self.invoke("workspace provision", "--apply"), 0)
+                        expected = len(self.settings["workspaces"]) if enabled else 0
+                        self.assertEqual(bootstrap.call_count, expected)
 
     def test_existing_workspace_bootstrap_is_explicit_and_requires_running(self):
-        self.client.list_sandboxes.return_value = [Sandbox(id="existing", state="Stopped")]
+        self.client.list_sandboxes.return_value = [
+            Sandbox(id="existing", state="Stopped", labels={"volume": "test-dev-data"})
+        ]
         self.sandbox.get.return_value = Sandbox(id="existing", state="Stopped")
-        with patch.object(cli, "bootstrap_tools") as bootstrap:
+        with patch.object(workspaces, "bootstrap_tools") as bootstrap:
             self.assertEqual(self.invoke("workspace bootstrap", "--name", "test-dev"), 0)
             bootstrap.assert_not_called()
         self.assertEqual(self.invoke("workspace bootstrap", "--name", "test-dev", "--apply"), 1)
         self.sandbox.write_file.assert_not_called()
         self.sandbox.exec.assert_not_called()
-        with patch.object(cli, "bootstrap_tools") as bootstrap:
+        with patch.object(workspaces, "bootstrap_tools") as bootstrap:
             self.sandbox.get.return_value = Sandbox(id="existing", state="Running")
             self.assertEqual(self.invoke("workspace bootstrap", "--name", "test-dev", "--apply"), 0)
             bootstrap.assert_called_once_with(self.sandbox)
         self.sandbox.begin_resume.assert_not_called()
         self.client.begin_create_sandbox.assert_not_called()
 
-    def test_sdk_bootstrap_uploads_assets_and_cleans_only_its_staging_directory(self):
-        staging = "/tmp/crucible-bootstrap.ABCD1234"
+    def test_sdk_bootstrap_stages_assets_and_runs_in_one_shell_call(self):
         self.sandbox.get.return_value = Sandbox(state="Running")
-        self.sandbox.exec.side_effect = [
-            ExecResult(stdout=staging + "\n"),
-            ExecResult(stdout="Tools ready\n"),
-        ]
+        self.sandbox.exec.return_value = ExecResult(stdout="Tools ready\n")
         bootstrap_tools(self.sandbox)
-        self.assertEqual(self.sandbox.write_file.call_count, 4)
-        self.sandbox.exec.assert_any_call(f"bash {staging}/bootstrap-tools.sh")
-        self.sandbox.delete_file.assert_called_once_with(staging, recursive=True)
-        self.assertTrue(all(call.args[0].startswith(staging + "/")
-                            for call in self.sandbox.write_file.call_args_list))
+        self.sandbox.exec.assert_called_once()
+        command = self.sandbox.exec.call_args.args[0]
+        self.assertIn('$HOME/.local/share/crucible', command)
+        for name in ("bootstrap-tools.sh", "install-tools.sh", "tools.lock.json"):
+            self.assertIn(f'$staging/{name}', command)
+        self.sandbox.write_file.assert_not_called()
+        self.sandbox.delete_file.assert_not_called()
 
     def test_sdk_bootstrap_failure_is_reported_without_replacing_the_workspace(self):
-        staging = "/tmp/crucible-bootstrap.ABCD1234"
         self.sandbox.get.return_value = Sandbox(state="Running")
-        self.sandbox.exec.side_effect = [
-            ExecResult(stdout=staging + "\n"),
-            ExecResult(exit_code=23, stderr="Network denied"),
-        ]
+        self.sandbox.exec.return_value = ExecResult(exit_code=23, stderr="Network denied")
+        self.sandbox.delete_file.side_effect = HttpResponseError(message="Directory not found")
         with self.assertRaisesRegex(RuntimeError, "exit status 23"):
             bootstrap_tools(self.sandbox)
-        self.sandbox.delete_file.assert_called_once_with(staging, recursive=True)
+        self.sandbox.delete_file.assert_not_called()
         self.client.begin_create_sandbox.assert_not_called()
         self.client.delete_sandbox.assert_not_called()
+
+    @unittest.skipUnless(Path("/bin/bash").is_file(), "Requires Bash")
+    def test_bootstrap_cleanup_preserves_failure_and_deletes_only_its_own_staging(self):
+        payloads = {
+            "bootstrap-tools.sh": "printf 'installer failed\\n' >&2\nexit 23\n",
+            "install-tools.sh": ":\n",
+            "tools.lock.json": "{}\n",
+        }
+        self.sandbox.get.return_value = Sandbox(state="Running")
+        self.sandbox.exec.return_value = ExecResult()
+        with patch.object(
+            Path, "read_text", autospec=True,
+            side_effect=lambda path, **kwargs: payloads[path.name],
+        ):
+            bootstrap_tools(self.sandbox)
+        command = self.sandbox.exec.call_args.args[0]
+        for cleanup_failure in (False, True):
+            with self.subTest(cleanup_failure=cleanup_failure), TemporaryDirectory() as directory:
+                home = Path(directory) / "test home"
+                tools = home / "bin"
+                tools.mkdir(parents=True)
+                marker = home / ".local/share/crucible/keep.txt"
+                marker.parent.mkdir(parents=True)
+                marker.write_text("developer data\n")
+                if cleanup_failure:
+                    find = tools / "find"
+                    find.write_text("#!/bin/sh\nexit 17\n")
+                    find.chmod(0o755)
+                with subprocess.Popen(
+                    ["/bin/bash", "-c", command],
+                    env={"HOME": str(home), "PATH": f"{tools}:/usr/bin:/bin"},
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+                ) as process:
+                    _, stderr = process.communicate()
+                    self.assertEqual(process.returncode, 23)
+                self.assertIn("installer failed", stderr)
+                self.assertEqual(marker.read_text(), "developer data\n")
+                remaining = list(marker.parent.glob("crucible-bootstrap.*"))
+                if cleanup_failure:
+                    self.assertIn("Could not remove bootstrap staging directory", stderr)
+                    self.assertEqual(len(remaining), 1)
+                else:
+                    self.assertEqual(remaining, [])
 
     def test_sdk_logging_is_errors_only_and_cli_progress_remains_visible(self):
         messages = io.StringIO()
@@ -284,7 +548,9 @@ class CliTests(unittest.TestCase):
 
     def test_existing_owned_workspace_is_never_restarted_or_updated(self):
         self.settings["autoSuspendEnabled"] = False
-        self.settings["workspaces"] = [{"name": "alice-dev", "diskSize": "80Gi"}]
+        self.settings["workspaces"] = [
+            {"name": "alice-dev", "storage": {"type": "DataDisk", "size": "80Gi"}}
+        ]
         labels = {"managed-by": "crucible", "workspace": "alice-dev"}
         self.client.list_volumes.return_value = [
             Volume(name="alice-dev-data", type="DataDisk", size="20Gi",
@@ -319,7 +585,9 @@ class CliTests(unittest.TestCase):
                 self.assert_no_mutations()
 
     def test_partial_workspace_is_not_repaired_automatically(self):
-        self.settings["workspaces"] = [{"name": "alice-dev", "diskSize": "20Gi"}]
+        self.settings["workspaces"] = [
+            {"name": "alice-dev", "storage": {"type": "DataDisk", "size": "20Gi"}}
+        ]
         labels = {"managed-by": "crucible", "workspace": "alice-dev"}
         for attached, policy in (
             (False, LifecyclePolicy()),
@@ -354,8 +622,9 @@ class CliTests(unittest.TestCase):
             {"image": ""}, {"idleTimeoutSeconds": True}, {"workspaces": None},
             {"autoSuspendEnabled": None}, {"autoSuspendEnabled": "false"},
             {"autoSuspendEnabled": 0},
-            {"workspaces": [{"name": "../escape", "diskSize": "20Gi"}]},
-            {"workspaces": [{"name": "alice-dev", "diskSize": "20Gi"}] * 2},
+            {"storageIdentityEnabled": None}, {"storageIdentityEnabled": "false"},
+            {"workspaces": [{"name": "../escape", "storage": {"type": "DataDisk", "size": "20Gi"}}]},
+            {"workspaces": [{"name": "alice-dev", "storage": {"type": "DataDisk", "size": "20Gi"}}] * 2},
         ):
             with self.subTest(changes=changes):
                 original = self.settings.copy()
@@ -391,8 +660,8 @@ class CliTests(unittest.TestCase):
                 self.assertEqual(create["volumes"][0].volume_name, "test-disk")
         self.client.create_volume.assert_not_called()
 
-    def test_manual_create_rejects_attached_or_shared_volume(self):
-        for volume in (Volume(type="DataDisk", is_attached=True), Volume(type="AzureBlob")):
+    def test_manual_create_rejects_attached_disk_or_unknown_volume(self):
+        for volume in (Volume(type="DataDisk", is_attached=True), Volume(type="Unknown")):
             with self.subTest(volume=volume):
                 self.client.get_volume.return_value = volume
                 self.assertEqual(self.invoke(

@@ -1,5 +1,5 @@
 metadata name = 'Crucible sandbox group'
-metadata description = 'Deploys the customer-scoped sandbox group without exposing ingress or assigning workload identities.'
+metadata description = 'Deploys the customer-scoped sandbox group with optional storage identity and no public ingress.'
 
 targetScope = 'resourceGroup'
 
@@ -14,6 +14,9 @@ param location string = resourceGroup().location
 @description('Optional existing Container Apps environment ARM ID in this subscription.')
 param environmentId string = ''
 
+@description('Enable a group-scoped system-assigned identity for customer-owned Blob volumes.')
+param storageIdentityEnabled bool = false
+
 @description('Tags applied to the sandbox group.')
 param tags object = {}
 
@@ -22,6 +25,11 @@ resource sandboxGroup 'Microsoft.App/sandboxGroups@2026-07-01' = {
   name: name
   location: location
   tags: tags
+  // The supported ARM identity field is missing from this sandbox group's published schema.
+  #disable-next-line BCP187
+  identity: {
+    type: storageIdentityEnabled ? 'SystemAssigned' : 'None'
+  }
   properties: empty(environmentId) ? {} : {
     environmentId: environmentId
   }
@@ -35,3 +43,7 @@ output name string = sandboxGroup.name
 
 @description('Region of the deployed sandbox group.')
 output location string = sandboxGroup.location
+
+@description('System-assigned principal for container-scoped storage roles; empty when disabled.')
+#disable-next-line BCP187
+output storagePrincipalId string = storageIdentityEnabled ? sandboxGroup.identity.principalId! : ''

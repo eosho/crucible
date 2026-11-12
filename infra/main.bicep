@@ -1,6 +1,6 @@
 targetScope = 'subscription'
 
-import { SandboxDataOwnerAssignment, SandboxNetworkConfig, WorkspaceDefinition } from './types.bicep'
+import { SandboxDataOwnerAssignment, SandboxNetworkConfig, WorkspaceBlobStorageConfig, WorkspaceDefinition } from './types.bicep'
 
 @description('Target resource group. The CLI supplies --resource-group as this parameter.')
 param resourceGroupName string = 'rg-crucible'
@@ -52,8 +52,11 @@ param workspaceIdleTimeoutSeconds int = 300
 @description('Enable idle auto-suspend for new workspaces. Disabling keeps compute billable until stopped.')
 param workspaceAutoSuspendEnabled bool = true
 
-@description('Install missing pinned user-space tools on new workspaces; existing ones require explicit bootstrap.')
+@description('Install missing tools in the execution-user home directory on new workspaces, regardless of volume type; existing ones require explicit bootstrap.')
 param workspaceBootstrapTools bool = false
+
+@description('Optional DNS settings for private Blob storage. BYO workspaces enable storage automatically; retain {} while existing BYO volumes still need it.')
+param workspaceBlobStorage WorkspaceBlobStorageConfig?
 
 @minLength(1)
 @description('Microsoft-provided sandbox image name. azure-dev supplies the base developer toolchain.')
@@ -63,6 +66,11 @@ param workspaceImage string = 'azure-dev'
 param tags object = {
   application: 'crucible'
 }
+
+var customerBlobWorkspaces = filter(workspaces, workspace => workspace.storage.type == 'AzureBlobByo')
+var workspaceBlobEnabled = !empty(customerBlobWorkspaces) || workspaceBlobStorage != null
+var privateEndpointSubnetName = network.?privateEndpointSubnetName ?? ''
+var privateEndpointSubnetAddressPrefix = network.?privateEndpointSubnetAddressPrefix ?? ''
 
 resource targetGroup 'Microsoft.Resources/resourceGroups@2025-04-01' = if (createResourceGroup) {
   name: resourceGroupName
@@ -77,6 +85,7 @@ module sandboxGroup './modules/aca/sandbox-group.bicep' = {
     name: sandboxGroupName
     location: location
     environmentId: environmentId
+    storageIdentityEnabled: workspaceBlobEnabled
     tags: tags
   }
 }
@@ -88,8 +97,10 @@ module newVnet './modules/network/virtual-network.bicep' = if (network.mode == '
     name: network.mode == 'newVnet' ? network.virtualNetworkName : ''
     location: location
     addressPrefix: network.mode == 'newVnet' ? network.addressPrefix : ''
-    subnetName: network.mode == 'newVnet' ? network.subnetName : ''
-    subnetAddressPrefix: network.mode == 'newVnet' ? network.subnetAddressPrefix : ''
+    acaSubnetName: network.mode == 'newVnet' ? network.acaSubnetName : ''
+    acaSubnetAddressPrefix: network.mode == 'newVnet' ? network.acaSubnetAddressPrefix : ''
+    privateEndpointSubnetName: privateEndpointSubnetName
+    privateEndpointSubnetAddressPrefix: privateEndpointSubnetAddressPrefix
     tags: tags
   }
 }
@@ -99,14 +110,34 @@ module existingVnetSubnet './modules/network/subnet.bicep' = if (network.mode ==
   scope: resourceGroup(network.mode == 'existingVnet' ? network.resourceGroupName : resourceGroupName)
   params: {
     virtualNetworkName: network.mode == 'existingVnet' ? network.virtualNetworkName : ''
-    name: network.mode == 'existingVnet' ? network.subnetName : ''
-    addressPrefix: network.mode == 'existingVnet' ? network.subnetAddressPrefix : ''
+    name: network.mode == 'existingVnet' ? network.acaSubnetName : ''
+    addressPrefix: network.mode == 'existingVnet' ? network.acaSubnetAddressPrefix : ''
   }
 }
 
 var selectedSubnetId = network.mode == 'existingSubnet'
   ? network.subnetId
   : (network.mode == 'existingVnet' ? existingVnetSubnet!.outputs.subnetId : newVnet!.outputs.subnetId)
+
+var privateEndpointNetworkSubscription = network.mode == 'existingSubnet' ? split(network.subnetId, '/')[2] : subscription().subscriptionId
+var privateEndpointNetworkResourceGroup = network.mode == 'existingSubnet'
+  ? split(network.subnetId, '/')[4]
+  : (network.mode == 'existingVnet' ? network.resourceGroupName : resourceGroupName)
+var privateEndpointVirtualNetworkName = network.mode == 'existingSubnet' ? split(network.subnetId, '/')[8] : network.virtualNetworkName
+
+module existingVnetPrivateEndpointSubnet './modules/network/private-endpoint-subnet.bicep' = if (network.mode != 'newVnet' && !empty(privateEndpointSubnetName)) {
+  name: 'private-endpoint-subnet-${uniqueString(privateEndpointVirtualNetworkName, privateEndpointSubnetName)}'
+  scope: resourceGroup(privateEndpointNetworkSubscription, privateEndpointNetworkResourceGroup)
+  params: {
+    virtualNetworkName: network.mode == 'existingVnet' ? split(existingVnetSubnet!.outputs.subnetId, '/')[8] : privateEndpointVirtualNetworkName
+    name: privateEndpointSubnetName
+    addressPrefix: privateEndpointSubnetAddressPrefix
+  }
+}
+
+var selectedPrivateEndpointSubnetId = empty(privateEndpointSubnetName)
+  ? ''
+  : (network.mode == 'newVnet' ? newVnet!.outputs.privateEndpointSubnetId : existingVnetPrivateEndpointSubnet!.outputs.subnetId)
 
 module vnetConnection './modules/aca/sandbox-vnet-connection.bicep' = {
   name: 'sandbox-network-${uniqueString(resourceGroupName, sandboxGroupName)}'
@@ -128,6 +159,24 @@ module sandboxAccess './modules/rbac/sandbox-access.bicep' = {
   }
 }
 
+module workspaceBlob './modules/storage/workspace-blob.bicep' = if (workspaceBlobEnabled) {
+  name: 'workspace-blob-${uniqueString(resourceGroupName, sandboxGroupName)}'
+  scope: targetGroup
+  params: {
+    name: 'stcrucible${uniqueString(subscription().id, resourceGroupName, sandboxGroupName)}'
+    sandboxGroupName: sandboxGroupName
+    location: location
+    privateEndpointSubnetId: selectedPrivateEndpointSubnetId
+    privateDnsZoneResourceId: workspaceBlobStorage.?privateDnsZoneResourceId ?? ''
+    principalId: sandboxGroup.outputs.storagePrincipalId
+    workspaces: map(customerBlobWorkspaces, workspace => {
+      name: workspace.name
+      readOnly: workspace.storage.type == 'AzureBlobByo' ? workspace.storage.readOnly : true
+    })
+    tags: tags
+  }
+}
+
 @description('Sandbox group ARM resource ID for group-scoped access assignments.')
 output sandboxGroupId string = sandboxGroup.outputs.resourceId
 
@@ -139,6 +188,9 @@ output vnetConnectionId string = vnetConnection.outputs.resourceId
 
 @description('ARM ID of the reused or provisioned delegated subnet.')
 output subnetId string = selectedSubnetId
+
+@description('ARM ID of the optional non-delegated private-endpoint subnet.')
+output privateEndpointSubnetId string = selectedPrivateEndpointSubnetId
 
 @description('Group-scoped role assignment IDs for explicit provisioning principals.')
 output dataOwnerRoleAssignmentIds array = sandboxAccess.outputs.roleAssignmentIds
@@ -155,6 +207,16 @@ output workspaceSettings object = {
   idleTimeoutSeconds: workspaceIdleTimeoutSeconds
   autoSuspendEnabled: workspaceAutoSuspendEnabled
   bootstrapTools: workspaceBootstrapTools
+  storageIdentityEnabled: workspaceBlobEnabled
   image: workspaceImage
-  workspaces: workspaces
+  workspaces: map(workspaces, workspace => {
+    name: workspace.name
+    storage: workspace.storage.type == 'AzureBlobByo'
+      ? {
+          type: 'AzureBlobByo'
+          readOnly: workspace.storage.readOnly
+          storageContainerResourceId: '${workspaceBlob!.outputs.storageAccountId}/blobServices/default/containers/ws-${workspace.name}'
+        }
+      : workspace.storage
+  })
 }

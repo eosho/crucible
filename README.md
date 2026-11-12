@@ -18,15 +18,15 @@
 <a id="status"></a>
 
 > [!WARNING]
-> Experimental; not production-ready. Settings and CLI behavior may change.
+> Experimental; not production-ready.
 > Use an approved subscription and review plans before applying.
 
 Deploy Crucible into each customer's approved Azure subscription to create
 development workspaces on Azure Container Apps Sandboxes.
 
 Bicep powers the underlying Azure resources and RBAC. The Python CLI manages
-workspaces and persistent disks through the Azure Container Apps Sandbox SDK. Workspaces
-use Microsoft's `azure-dev` image, with bootstrap to install missing tools.
+workspaces and storage volumes through the Azure Container Apps Sandbox SDK.
+Workspaces use Microsoft's `azure-dev` image, with bootstrap to install missing tools.
 
 ## Architecture
 
@@ -39,26 +39,30 @@ flowchart LR
     tunnels["Microsoft Dev Tunnels"]
 
     subgraph customer["Customer Azure subscription"]
-        subgraph group["Sandbox group"]
+        subgraph group["Sandbox group + optional storage identity"]
             sandbox["Developer sandbox<br/>VS Code Server + tools"]
-            disk[("Persistent Data Disk<br/>/workspaces")]
+            volume[("Volume at /workspaces<br/>Data Disk / managed Blob / BYO Blob")]
+            tools["Sandbox root filesystem<br/>Tools in user home"]
         end
-        network["VNet connection"]
+        network["VNet connection<br/>Delegated ACA subnet"]
         services["Private customer services"]
+        blob["Optional private BYO Storage<br/>Private endpoint + DNS<br/>Container-scoped RBAC"]
     end
 
     cli -.-> bicep
     cli -.-> sdk
     bicep -. "ARM resources + RBAC" .-> group
-    sdk -. "Workspaces, disks, bootstrap" .-> sandbox
+    bicep -. "Networking" .-> network
+    bicep -. "BYO resources" .-> blob
+    sdk -. "Workspaces + volumes" .-> sandbox
+    sdk -. "Bootstrap" .-> tools
     editor <-->|Authenticated session| tunnels
-    sandbox -->|Outbound tunnel| tunnels
-    sandbox --- disk
+    sandbox --> tunnels
+    sandbox --- volume
+    sandbox --- tools
     sandbox --> network --> services
+    network -->|Separate private-endpoint subnet| blob
 ```
-
-Dashed arrows show provisioning. Code runs in the sandbox; private service access
-still requires the right DNS, routes, firewall rules, and permissions.
 
 ## Get started
 
@@ -87,9 +91,6 @@ code tunnel --name alice-dev
 Review and accept the VS Code Server license, then follow the sign-in prompts.
 Pass `--accept-server-license-terms` only if you agree to the license.
 The tunnel runs in the foreground; closing the portal shell can disconnect it.
-After [bootstrap](docs/tools.md), open a new shell to use
-`crucible-tunnel --name alice-dev`, the
-[packaged helper](src/crucible/assets/connect-tunnel.sh).
 
 ### Keep the tunnel running after closing the shell
 
@@ -124,7 +125,8 @@ Open the `vscode.dev` URL printed by the tunnel command. Sign in with the same
 account and open `/workspaces` or your project folder.
 
 Both options connect to the same sandbox without a public SSH endpoint.
-Keep project files under `/workspaces` so they persist on the Data Disk.
+For project files, use a Data Disk-backed `/workspaces`; see
+[storage choices](docs/workspaces.md#persistent-storage) for Blob alternatives.
 After a stop/resume, restart the tunnel and reconnect. See
 [workspace lifecycle and access](docs/workspaces.md) for idle suspension and permissions.
 
@@ -146,7 +148,7 @@ uv run crucible deploy --subscription SUBSCRIPTION --resource-group RESOURCE_GRO
 |---|---|
 | None | Compile parameters and check resource-group existence; no changes |
 | `--what-if` | Preview ARM changes only |
-| `--apply` | Deploy infrastructure and provision missing workspaces/disks |
+| `--apply` | Deploy infrastructure and provision missing workspaces/volumes |
 
 Use either `--what-if` or `--apply`, never both. Provisioning leaves existing
 workspaces alone, without rebuilding or deleting them.
@@ -163,8 +165,8 @@ uv run crucible workspace ACTION --subscription SUBSCRIPTION \
 
 | Action | Additional required arguments | Purpose |
 |---|---|---|
-| `provision` | None | Create missing declared workspaces and dedicated disks |
-| `create` | `--name NAME --volume VOLUME` | Create a workspace using an existing unattached Data Disk |
+| `provision` | None | Create missing declared workspaces and volumes |
+| `create` | `--name NAME --volume VOLUME` | Create a workspace using an existing volume; Blob mounts support `--read-only` |
 | `bootstrap` | `--name NAME` | Install missing tools on a running workspace |
 | `auto-suspend` | `--name NAME` and `--enable` or `--disable` | Toggle idle suspension without restarting |
 | `stop` | `--name NAME` | Suspend a workspace |
@@ -193,7 +195,7 @@ Use the optional [Dev Container](docs/development.md#dev-container) to work on C
 - [Workspaces](docs/workspaces.md): persistent disks, lifecycle, remote access.
 - [Validation](docs/validation.md): private-access tests and customer-readiness checks.
 - [Tools](docs/tools.md): Bootstrapped tools and default image.
-- [Development](docs/development.md): prerequisites, local checks, code conventions.
+- [Development](docs/development.md): contributor setup and checks.
 
 ## License
 

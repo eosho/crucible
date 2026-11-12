@@ -3,7 +3,7 @@
 [Back to overview](../README.md)
 
 Run commands from the repository root. Bicep creates ARM resources and assigns
-RBAC roles. The Python SDK creates individual sandboxes and persistent disks.
+RBAC roles. The Python SDK creates individual sandboxes and storage volumes.
 
 ## Configure a customer
 
@@ -42,6 +42,26 @@ provision a registry or image-building infrastructure.
 | `existingVnet` | Create a dedicated delegated subnet in an existing VNet |
 | `newVnet` | Create a dedicated VNet and delegated subnet |
 
+Keep both subnet definitions in `network`:
+
+```bicep
+param network = {
+  mode: 'newVnet'
+  virtualNetworkName: 'vnet-crucible-dev'
+  addressPrefix: '10.44.0.0/16'
+  acaSubnetName: 'sandboxes'
+  acaSubnetAddressPrefix: '10.44.0.0/23'
+  privateEndpointSubnetName: 'private-endpoints'
+  privateEndpointSubnetAddressPrefix: '10.44.2.0/27'
+}
+```
+
+The private-endpoint fields are optional unless BYO Blob storage is used.
+Bicep creates that subnet without delegation, separately from the ACA subnet.
+Both CIDRs must fit the VNet and must not overlap. For `existingSubnet`, retain
+`subnetId` and add the private-endpoint fields to create a separate subnet in
+the same VNet.
+
 Use the sandbox group's subscription and region, with customer-approved CIDRs.
 For `existingVnet`, supply the VNet's resource group and give the deployment
 identity access to it. Creation leaves unrelated subnets alone, so choose a
@@ -56,7 +76,8 @@ doesn't protect against ARM network changes.
 The customer manages routing, corporate DNS forwarding, private endpoints,
 firewalls, and peering. A VNet connection alone doesn't establish an egress
 allowlist or prove that private services are reachable. Crucible doesn't
-provision public ingress, an SSH server, or a workload identity.
+provision public ingress or an SSH server. A group storage identity is optional
+and disabled by default.
 
 ## Grant access
 
@@ -69,6 +90,12 @@ Container Apps SandboxGroup Data Owner grants access to every workspace in the
 group. Use separate groups when workload identities or individual developers
 mustn't have access to teammates' workspaces. A provisioning service for a
 shared group must enforce its own authorization.
+
+Choosing [BYO Blob storage](workspaces.md#persistent-storage) automatically
+enables its infrastructure. Configure the private-endpoint subnet in `network`.
+Bicep creates the private account, containers, endpoint, DNS, and group identity,
+then grants container-scoped reader or contributor access. The deployment identity
+needs permission to create those resources and role assignments.
 
 ## Deploy
 
@@ -86,7 +113,7 @@ With `--apply`, Crucible:
 
 1. Runs a subscription-scoped Bicep deployment to create a missing resource group
    and deploy the sandbox group, networking, and requested RBAC assignments.
-2. Uses the SDK to create missing workspaces and dedicated Data Disks, then
+2. Uses the SDK to create missing workspaces and their declared volumes, then
    installs missing tools if bootstrap is enabled.
    Existing workspaces are [left unchanged](workspaces.md#provision-declared-workspaces).
 
@@ -105,8 +132,8 @@ workspaces before retrying, and allow time for new role assignments to propagate
 
 - Use distinct `--deployment` names per environment within a subscription
   (default: `crucible`). Use the same name for all workspace commands.
-- Deploy current Bicep first. Workspace commands read only subscription-level
-  outputs and reject a resource-group mismatch.
+- Workspace commands require subscription-level deployment outputs and a
+  matching resource group.
 - Keep the deployment record's metadata location consistent.
 - Preserve a linked `environmentId`; Azure does not allow changing or removing it.
 - Removing a principal from the parameters doesn't revoke its role assignment.

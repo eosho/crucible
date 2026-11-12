@@ -8,12 +8,12 @@ missing workspaces together. The PoC uses `azure-dev` with
 
 ## Provision declared workspaces
 
-Declare stable names and disk sizes in your Bicep parameter file:
+Declare stable names and storage in your Bicep parameter file:
 
 ```bicep
 param workspaces = [
-  { name: 'alice-dev', diskSize: '20Gi' }
-  { name: 'bob-dev', diskSize: '20Gi' }
+  { name: 'alice-dev', storage: { type: 'DataDisk', size: '20Gi' } }
+  { name: 'bob-dev', storage: { type: 'DataDisk', size: '20Gi' } }
 ]
 ```
 
@@ -29,11 +29,10 @@ Workspace commands read settings from the selected subscription deployment.
 Use its `--deployment` name. Without `--apply`, commands read Azure state without
 changing it.
 
-The CLI checks every inventory entry before creating any missing disk/sandbox pairs:
+The CLI checks every inventory entry before creating any missing volume/sandbox pairs:
 
-- Existing workspaces stay as they are, including stopped workspaces. Changing
-  defaults doesn't recreate or resize them, or update their policies.
-- Removing or renaming an entry doesn't delete its old sandbox or disk.
+- Existing workspaces and storage stay unchanged, including stopped workspaces.
+- Removing or renaming an entry doesn't delete the sandbox or volume.
   The inventory doesn't autoscale workspaces, cap the group, or limit costs.
 - Duplicate names, ownership conflicts, missing or orphaned disks, and incomplete
   or transitional pairs stop provisioning. The CLI doesn't adopt manual resources.
@@ -48,15 +47,31 @@ Ownership labels don't restrict access; see [group access](infrastructure.md#gra
 
 ## Persistent storage
 
-Each workspace gets a dedicated Data Disk named `<workspace-name>-data`, mounted
-at `/workspaces`. Keep source, Git data, and project state there. A disk attaches
-to one sandbox at a time. Set ownership for the user running your tools instead
-of making the directory world-writable.
+Each workspace mounts `<workspace-name>-data` at `/workspaces`:
 
-The root disk and Data Disks must fit the CPU-based storage budget. Set
-`workspaceRootDiskSize` explicitly; otherwise Azure allocates the full budget to
-the root disk. Push work to source control and back up data before deleting a
-group or volume. A persistent disk isn't a backup.
+| `storage.type` | Required fields | Use |
+|---|---|---|
+| `DataDisk` | `size`, such as `'20Gi'` | Repositories, dependencies, and build caches |
+| `AzureBlob` | `readOnly` | Platform-managed Blob storage |
+| `AzureBlobByo` | `readOnly` | Private Blob storage created by Bicep |
+
+See the [three-type example](../infra/parameters/storage.example.bicepparam).
+Data Disk provides full POSIX semantics and attaches to one sandbox at a time.
+Use Blob for read-heavy data, not concurrent writers or workloads requiring
+hardlinks and atomic renames. Bootstrap installs in the user's home with any type.
+
+BYO requires the [private-endpoint subnet settings](infrastructure.md#choose-networking).
+Bicep creates the account, containers, endpoint, DNS, and group identity. Public,
+anonymous, and account-key access are disabled; private endpoints incur charges.
+Read-only containers get Blob Data Reader; writable ones get Contributor.
+The identity is shared across the group, so read-only mounts aren't user isolation.
+
+For existing private DNS, set `workspaceBlobStorage.privateDnsZoneResourceId` to
+an already-linked zone. Keep `workspaceBlobStorage = {}` and the subnet settings
+if you remove all BYO entries before retiring their workspaces.
+
+Set `workspaceRootDiskSize` so root plus Data Disks fit the CPU storage budget.
+Back up data before deleting a group or volume.
 
 ## Stop and resume
 
@@ -84,8 +99,7 @@ Disable idle auto-suspend to keep a workspace running without heartbeat requests
 Compute stays billable while it runs. This won't start a stopped workspace or
 prevent manual stops or service interruptions.
 
-For an existing workspace, deploy current Bicep settings first, then review the
-policy change:
+To change idle suspension on an existing workspace, review the policy change:
 
 ```bash
 uv run crucible workspace auto-suspend --subscription SUBSCRIPTION \
@@ -98,10 +112,11 @@ The [official SDK lifecycle sample](https://github.com/Azure-Samples/azure-conta
 uses the same lifecycle API. Provisioning and default-setting changes leave
 existing workspace policies alone.
 
-## Create with an existing disk
+## Create with an existing volume
 
-To create a workspace outside the declared inventory, supply an existing,
-unattached Data Disk dedicated to that workspace:
+To create a workspace outside the inventory, supply an existing volume.
+Data Disks must be unattached and dedicated to that workspace. Blob volumes
+may already be mounted elsewhere; use `--read-only` for read sharing.
 
 ```bash
 uv run crucible workspace create --subscription SUBSCRIPTION --resource-group RESOURCE_GROUP \
@@ -109,8 +124,8 @@ uv run crucible workspace create --subscription SUBSCRIPTION --resource-group RE
 # Review, then repeat with --apply.
 ```
 
-The command rejects an existing workspace name. It attaches the disk and sets
-the same lifecycle policy. It doesn't create the disk or label it for inventory
+The command rejects an existing workspace name. It mounts the volume and sets
+the same lifecycle policy. It doesn't create the volume or label it for inventory
 ownership.
 
 ## Connect remotely
