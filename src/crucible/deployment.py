@@ -1,4 +1,4 @@
-"""Deploy Bicep and read infrastructure settings through Azure CLI."""
+"""Manage Azure infrastructure and deployment settings through Azure CLI."""
 
 import json
 import logging
@@ -130,6 +130,59 @@ def deploy(args: Arguments) -> None:
         ]
         LOGGER.info("az %s", shlex.join(command))
         _ = run_az(command)
+
+
+def destroy(args: Arguments) -> None:
+    """Preview or permanently delete a dedicated resource group and everything inside it.
+
+    Args:
+        args: Explicit subscription, resource group, and apply flag.
+
+    Raises:
+        WorkspaceError: The target group or its deletion cannot be confirmed.
+        subprocess.CalledProcessError: Azure CLI rejects a read or deletion.
+    """
+    scope = ["--subscription", args.subscription, "--resource-group", args.resource_group]
+    group_id = run_az(
+        ["group", "show", *scope, "--query", "id", "--output", "tsv"],
+        capture_output=True,
+    ).stdout.strip()
+    if not group_id:
+        message = "Azure CLI did not return the target resource group ID"
+        raise WorkspaceError(message)
+    resources = run_az(
+        [
+            "resource",
+            "list",
+            *scope,
+            "--query",
+            "[].{Name:name,Type:type}",
+            "--output",
+            "table",
+        ],
+        capture_output=True,
+    )
+    LOGGER.warning(
+        "Destroy target: %s. This permanently deletes ALL resources and workspace data in the group.",
+        group_id,
+    )
+    for line in resources.stdout.splitlines():
+        LOGGER.info("%s", line)
+    if not args.apply:
+        LOGGER.info("To delete this group, repeat with --apply.")
+        return
+    LOGGER.warning("Deleting resource group %s; waiting for Azure to finish.", args.resource_group)
+    _ = run_az(["group", "delete", *scope, "--yes"], capture_output=True)
+    exists = cast(
+        "object",
+        json.loads(
+            run_az(["group", "exists", *scope, "--output", "json"], capture_output=True).stdout
+        ),
+    )
+    if exists is not False:
+        message = "Resource group deletion was not confirmed; inspect Azure before retrying"
+        raise WorkspaceError(message)
+    LOGGER.info("Deleted resource group %s.", group_id)
 
 
 def read_json_object(text: str) -> dict[str, object]:

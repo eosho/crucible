@@ -113,6 +113,25 @@ their location and tags. An ARM failure stops the command before SDK provisionin
 An SDK failure leaves resources already created in place. Inspect partial
 workspaces before retrying, and allow time for new role assignments to propagate.
 
+## Destroy
+
+Use only with a dedicated resource group. First list the target and its ARM resources:
+
+```bash
+uv run crucible destroy --subscription SUBSCRIPTION --resource-group RESOURCE_GROUP
+```
+
+To delete it, repeat with `--apply`.
+
+This deletes **everything in the group**, including unrelated resources, sandboxes,
+workspace volumes, Storage accounts, and stored data. Back up data first. The command
+waits for Azure to finish and confirms that the group is gone.
+
+Resources outside the group, such as reused networks or subnets in another group,
+and subscription-level deployment records aren't deleted. Resource locks or missing
+permissions can block deletion; inspect any failure before retrying. The preview
+lists resources, not a dependency or impact analysis.
+
 ## Redeploy safely
 
 - Review network changes with `--what-if`: `newVnet` and `existingVnet` can remove

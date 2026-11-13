@@ -148,12 +148,15 @@ def validate_existing_workspace(
     policy = sandbox.lifecycle
     if (
         volume.type not in VolumeType
-        or volume.is_attached is not True
         or sandbox.state not in ("Running", "Stopped")
         or policy is None
         or (
             volume.type == VolumeType.DATA_DISK
-            and (policy.auto_suspend is None or policy.auto_suspend.mode != "Disk")
+            and (
+                volume.is_attached is not True
+                or policy.auto_suspend is None
+                or policy.auto_suspend.mode != "Disk"
+            )
         )
         or policy.auto_delete is None
         or policy.auto_delete.enabled
