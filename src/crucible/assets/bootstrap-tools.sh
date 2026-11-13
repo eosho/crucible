@@ -6,7 +6,7 @@ usage() {
     printf 'Usage: bootstrap-tools.sh [--prefix PATH] [--help]\n'
 }
 
-prefix=/workspaces/.crucible
+prefix="$HOME/.local/share/crucible"
 while (($#)); do
     case $1 in
         --prefix)
@@ -21,7 +21,6 @@ bundle=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 bash "$bundle/install-tools.sh" --manifest "$bundle/tools.lock.json" \
     --prefix "$prefix" --skip-installed
 prefix=$(cd -- "$prefix" && pwd -P)
-install -m 0755 "$bundle/connect-tunnel.sh" "$prefix/bin/crucible-tunnel"
 printf 'export PATH=%q/bin:"$PATH"\n' "$prefix" > "$prefix/env.sh"
 printf -v source_line '[ ! -f %q ] || . %q' "$prefix/env.sh" "$prefix/env.sh"
 for profile in "$HOME/.profile" "$HOME/.bashrc"; do

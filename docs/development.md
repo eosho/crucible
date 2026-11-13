@@ -31,7 +31,6 @@ Run `az login` before using Azure. Workspace commands use Azure Identity's
 `AzureCliCredential` for the supplied `--subscription`. The
 `azure-containerapps-sandbox==0.1.0b4` SDK calls use the
 `2026-02-01-preview` data-plane API. Bicep uses ARM APIs chosen for each resource.
-Review SDK release notes before upgrading.
 
 ## Install and check
 
@@ -68,18 +67,5 @@ branch coverage. The full set of checks hasn't been verified as passing.
 Ruff excludes tests from linting and formatting, even when passed explicit paths.
 Basedpyright and pytest still include them.
 
-## Conventions
-
-- Keep CLI code in [src/crucible](../src/crucible/) and tests in
-  [tests](../tests/). Don't duplicate Azure resource-schema validation in tests.
-- Use action-based names and Google-style Python docstrings with `Args`, `Returns`,
-  `Raises`, and `Attributes` sections where applicable.
-- Log `timestamp | level | message` to stderr with standard-library logging.
-  Azure SDK logs are errors-only; child-process stdout is unchanged.
-- Use comments to explain intent or constraints that the code doesn't make clear.
-- Keep provisioning and RBAC in Bicep. The CLI coordinates deployment and
-  sandbox operations. See the [infrastructure guide](infrastructure.md).
-- Group Bicep modules by service, prefer applicable stable APIs, and use symbolic
-  references for inferred dependencies rather than redundant `dependsOn` entries.
-- Run the checks that cover your changes. Documentation-only changes don't need
-  a code test run.
+Repository coding guidelines live in
+[crucible.instructions.md](../.github/instructions/crucible.instructions.md).

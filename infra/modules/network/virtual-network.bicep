@@ -16,11 +16,17 @@ param addressPrefix string
 
 @minLength(1)
 @description('Name of the dedicated sandbox subnet.')
-param subnetName string
+param acaSubnetName string
 
 @minLength(1)
 @description('Unused IPv4 CIDR inside the VNet address space.')
-param subnetAddressPrefix string
+param acaSubnetAddressPrefix string
+
+@description('Optional shared, non-delegated private-endpoint subnet name; empty omits it.')
+param privateEndpointSubnetName string = ''
+
+@description('CIDR for the private-endpoint subnet.')
+param privateEndpointSubnetAddressPrefix string = ''
 
 @description('Tags applied to the dedicated virtual network.')
 param tags object = {}
@@ -33,11 +39,11 @@ resource virtualNetwork 'Microsoft.Network/virtualNetworks@2026-01-01' = {
     addressSpace: {
       addressPrefixes: [addressPrefix]
     }
-    subnets: [
+    subnets: concat([
       {
-        name: subnetName
+        name: acaSubnetName
         properties: {
-          addressPrefix: subnetAddressPrefix
+          addressPrefix: acaSubnetAddressPrefix
           delegations: [
             {
               name: 'container-apps'
@@ -48,9 +54,22 @@ resource virtualNetwork 'Microsoft.Network/virtualNetworks@2026-01-01' = {
           ]
         }
       }
-    ]
+    ], empty(privateEndpointSubnetName) ? [] : [
+      {
+        name: privateEndpointSubnetName
+        properties: {
+          addressPrefix: privateEndpointSubnetAddressPrefix
+          privateEndpointNetworkPolicies: 'Disabled'
+        }
+      }
+    ])
   }
 }
 
 @description('ARM resource ID of the new delegated subnet.')
-output subnetId string = resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetwork.name, subnetName)
+output subnetId string = resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetwork.name, acaSubnetName)
+
+@description('ARM ID of the optional non-delegated private-endpoint subnet.')
+output privateEndpointSubnetId string = empty(privateEndpointSubnetName)
+  ? ''
+  : resourceId('Microsoft.Network/virtualNetworks/subnets', virtualNetwork.name, privateEndpointSubnetName)

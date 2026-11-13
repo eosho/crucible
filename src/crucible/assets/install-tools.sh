@@ -100,4 +100,5 @@ while IFS=$'\t' read -r name version url checksum; do
     [[ ${#executables[@]} -eq 1 ]] || fail "$name: expected exactly one executable in archive"
     chmod 0755 -- "${executables[0]}"
     ln -s -- "${executables[0]}" "$prefix/bin/$name"
+    [[ -x $prefix/bin/$name ]] || fail "$name: installation directory must allow execution"
 done < "$temporary/tools"

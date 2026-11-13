@@ -1,10 +1,41 @@
-"""The CLI's deployment-output contract."""
+"""Typed CLI arguments and deployment settings."""
 
+import argparse
 import re
 from dataclasses import dataclass
+from enum import StrEnum
+from pathlib import Path
 from typing import TypeGuard
 
 WORKSPACE_NAME = re.compile(r"[a-z][a-z0-9-]{0,30}[a-z0-9]")
+
+
+class VolumeType(StrEnum):
+    """Storage types supported by Crucible and the sandbox SDK."""
+
+    DATA_DISK = "DataDisk"
+    MANAGED_BLOB = "AzureBlob"
+    BYO_BLOB = "AzureBlobByo"
+
+
+class WorkspaceError(RuntimeError):
+    """A workspace conflict or incompatible deployment output."""
+
+
+class Arguments(argparse.Namespace):
+    """Typed command arguments populated by argparse."""
+
+    action: str
+    subscription: str
+    resource_group: str
+    deployment: str
+    name: str
+    parameters: Path
+    volume: str
+    apply: bool
+    what_if: bool
+    auto_suspend_enabled: bool
+    read_only: bool
 
 
 def is_record(value: object) -> TypeGuard[dict[str, object]]:
@@ -18,20 +49,77 @@ def is_array(value: object) -> TypeGuard[list[object]]:
 
 
 @dataclass(frozen=True)
-class WorkspaceDefinition:
-    """A stable workspace name and its dedicated persistent disk allocation.
+class WorkspaceStorage:
+    """Validated storage backing the /workspaces mount.
 
     Attributes:
-        name: Unique name used for workspace labels and disk naming.
-        disk_size: Data Disk size requested only when provisioning a new disk.
+        type: SDK volume type.
+        size: Data Disk allocation; omitted for Blob storage.
+        read_only: Whether the Blob mount is read-only.
+        storage_container_resource_id: Existing container ARM ID for BYO Blob.
+    """
+
+    type: VolumeType
+    size: str | None = None
+    read_only: bool = False
+    storage_container_resource_id: str | None = None
+
+    @classmethod
+    def from_outputs(cls, value: object) -> "WorkspaceStorage":
+        """Parse one discriminated storage definition.
+
+        Args:
+            value: Deployed storage object.
+
+        Returns:
+            Storage configuration with no credentials.
+
+        Raises:
+            TypeError: The volume type is not a string.
+            ValueError: The volume type is unsupported or required fields cannot be read.
+        """
+        if not is_record(value):
+            message = "Workspace storage must be a DataDisk, AzureBlob, or AzureBlobByo object"
+            raise ValueError(message)
+        type_value = value.get("type")
+        if not isinstance(type_value, str):
+            message = "Workspace storage requires a string volume type"
+            raise TypeError(message)
+        volume_type = VolumeType(type_value)
+        if volume_type == VolumeType.DATA_DISK:
+            size = value.get("size")
+            if not isinstance(size, str) or not size:
+                message = "DataDisk storage requires a nonempty size string"
+                raise ValueError(message)
+            return cls(type=volume_type, size=size)
+        read_only = value.get("readOnly")
+        if type(read_only) is not bool:
+            message = "Blob storage requires a boolean readOnly field"
+            raise ValueError(message)
+        if volume_type == VolumeType.MANAGED_BLOB:
+            return cls(type=volume_type, read_only=read_only)
+        container = value.get("storageContainerResourceId")
+        if not isinstance(container, str) or not container:
+            message = "AzureBlobByo requires a nonempty storageContainerResourceId string"
+            raise ValueError(message)
+        return cls(type=volume_type, read_only=read_only, storage_container_resource_id=container)
+
+
+@dataclass(frozen=True)
+class WorkspaceDefinition:
+    """A stable workspace name and its persistent storage allocation.
+
+    Attributes:
+        name: Unique name used for workspace labels and volume naming.
+        storage: Configuration of the /workspaces volume.
     """
 
     name: str
-    disk_size: str
+    storage: WorkspaceStorage
 
     @property
     def volume_name(self) -> str:
-        """Return the deterministic name of this workspace's dedicated disk."""
+        """Return the deterministic name of this workspace's volume."""
         return f"{self.name}-data"
 
     @classmethod
@@ -42,24 +130,20 @@ class WorkspaceDefinition:
             value: Decoded workspace definition.
 
         Returns:
-            The immutable workspace name and disk allocation.
+            The immutable workspace name and storage allocation.
 
         Raises:
             TypeError: The definition is not an object.
-            ValueError: The definition has an invalid name or disk size field.
+            ValueError: The definition has an invalid name or storage configuration.
         """
         if not is_record(value):
-            message = "Each deployed workspace must be an object with name and diskSize"
+            message = "Each deployed workspace must be an object with name and storage"
             raise TypeError(message)
         name = value.get("name")
-        disk_size = value.get("diskSize")
         if not isinstance(name, str) or not WORKSPACE_NAME.fullmatch(name):
             message = "Workspace names must be 2-32 lowercase letters, digits, or hyphens"
             raise ValueError(message)
-        if not isinstance(disk_size, str) or not re.fullmatch(r"[1-9][0-9]*(Mi|Gi)", disk_size):
-            message = f"Workspace {name} requires a positive diskSize such as 20Gi"
-            raise ValueError(message)
-        return cls(name=name, disk_size=disk_size)
+        return cls(name=name, storage=WorkspaceStorage.from_outputs(value.get("storage")))
 
 
 def parse_workspaces(value: object) -> tuple[WorkspaceDefinition, ...]:
@@ -156,11 +240,8 @@ class WorkspaceSettings:
                 raise ValueError(message)
             settings[field] = setting
         idle_timeout = value.get("idleTimeoutSeconds")
-        if type(idle_timeout) is not int or idle_timeout < 1:
-            message = (
-                "Deployment workspaceSettings requires a positive integer idleTimeoutSeconds; "
-                "redeploy the current Bicep"
-            )
+        if type(idle_timeout) is not int:
+            message = "Deployment workspaceSettings requires an integer idleTimeoutSeconds"
             raise ValueError(message)
         bootstrap = value.get("bootstrapTools")
         if not isinstance(bootstrap, bool):

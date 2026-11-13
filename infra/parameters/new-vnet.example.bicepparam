@@ -3,8 +3,8 @@ using '../main.bicep'
 param location = 'westus2'
 param sandboxGroupName = 'crucible-customer-dev'
 param workspaces = [
-  { name: 'alice-dev', diskSize: '20Gi' }
-  { name: 'bob-dev', diskSize: '20Gi' }
+  { name: 'alice-dev', storage: { type: 'DataDisk', size: '20Gi' } }
+  { name: 'bob-dev', storage: { type: 'DataDisk', size: '20Gi' } }
 ]
 param vnetConnectionName = 'customer-dev'
 param workspaceCpu = '4000m'
@@ -17,8 +17,8 @@ param network = {
   mode: 'newVnet'
   virtualNetworkName: 'vnet-crucible-customer-dev'
   addressPrefix: '10.42.0.0/16'
-  subnetName: 'crucible'
-  subnetAddressPrefix: '10.42.0.0/23'
+  acaSubnetName: 'crucible'
+  acaSubnetAddressPrefix: '10.42.0.0/23'
 }
 
 param dataOwnerAssignments = []

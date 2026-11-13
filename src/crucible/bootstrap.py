@@ -2,7 +2,7 @@
 
 import logging
 import shlex
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 from azure.containerapps.sandbox import SandboxClient
 
@@ -10,10 +10,10 @@ LOGGER = logging.getLogger(__name__)
 
 
 def bootstrap_tools(sandbox: SandboxClient) -> None:
-    """Upload and run the pinned, skip-installed tool setup.
+    """Stage and run tool setup in one shell execution.
 
     Args:
-        sandbox: A running sandbox with its persistent disk mounted at /workspaces.
+        sandbox: A running sandbox with a writable, executable execution-user home directory.
 
     Raises:
         OSError: A bundled bootstrap asset cannot be read.
@@ -25,37 +25,38 @@ def bootstrap_tools(sandbox: SandboxClient) -> None:
         raise RuntimeError(message)
     bundle = Path(__file__).with_name("assets")
     payloads = {
-        name: (bundle / name).read_bytes()
+        name: (bundle / name).read_text(encoding="utf-8")
         for name in (
             "bootstrap-tools.sh",
             "install-tools.sh",
             "tools.lock.json",
-            "connect-tunnel.sh",
         )
     }
-    created = sandbox.exec("mktemp -d -t crucible-bootstrap.XXXXXXXXXX")
-    staging = created.stdout.strip()
-    path = PurePosixPath(staging)
-    if (
-        created.exit_code
-        or not path.is_absolute()
-        or not path.name.startswith("crucible-bootstrap.")
-        or ".." in path.parts
-    ):
-        message = f"Could not create a dedicated bootstrap directory: {created.stderr}"
+    commands = [
+        """set -eu
+parent="$HOME/.local/share/crucible"
+mkdir -p "$parent"
+staging=$(mktemp -d "$parent/crucible-bootstrap.XXXXXXXXXX")
+cleanup() {
+    status=$?
+    trap - EXIT
+    if ! find "$staging" -depth -delete; then
+        printf 'Error: Could not remove bootstrap staging directory: %s\\n' "$staging" >&2
+        if [ "$status" -eq 0 ]; then status=1; fi
+    fi
+    exit "$status"
+}
+trap cleanup EXIT"""
+    ]
+    for name, content in payloads.items():
+        commands.append(f'printf %s {shlex.quote(content)} > "$staging/{name}"')
+    commands.append('bash "$staging/bootstrap-tools.sh"')
+    script = "\n".join(commands)
+    result = sandbox.exec(f"bash -c {shlex.quote(script)}")
+    for line in result.stdout.splitlines():
+        LOGGER.info("%s", line)
+    for line in result.stderr.splitlines():
+        LOGGER.log(logging.ERROR if result.exit_code else logging.WARNING, "%s", line)
+    if result.exit_code:
+        message = f"Tool bootstrap failed with exit status {result.exit_code}; inspect the sandbox"
         raise RuntimeError(message)
-    try:
-        for name, content in payloads.items():
-            sandbox.write_file(f"{staging}/{name}", content, mode="0644")
-        result = sandbox.exec(f"bash {shlex.quote(staging + '/bootstrap-tools.sh')}")
-        for line in result.stdout.splitlines():
-            LOGGER.info("%s", line)
-        for line in result.stderr.splitlines():
-            LOGGER.log(logging.ERROR if result.exit_code else logging.WARNING, "%s", line)
-        if result.exit_code:
-            message = (
-                f"Tool bootstrap failed with exit status {result.exit_code}; inspect the sandbox"
-            )
-            raise RuntimeError(message)
-    finally:
-        sandbox.delete_file(staging, recursive=True)

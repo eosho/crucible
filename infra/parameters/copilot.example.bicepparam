@@ -3,16 +3,16 @@ using '../main.bicep'
 param location = 'eastus'
 param sandboxGroupName = 'crucible-copilot-dev'
 param workspaces = [
-  { name: 'alice-dev', diskSize: '20Gi' }
-  { name: 'bob-dev', diskSize: '20Gi' }
+  { name: 'alice-dev', storage: { type: 'DataDisk', size: '20Gi' } }
+  { name: 'bob-dev', storage: { type: 'DataDisk', size: '20Gi' } }
 ]
 param vnetConnectionName = 'copilot-network'
 param network = {
   mode: 'newVnet'
   virtualNetworkName: 'vnet-crucible-copilot-dev'
   addressPrefix: '10.43.0.0/16'
-  subnetName: 'sandboxes'
-  subnetAddressPrefix: '10.43.0.0/23'
+  acaSubnetName: 'sandboxes'
+  acaSubnetAddressPrefix: '10.43.0.0/23'
 }
 
 param workspaceCpu = '4000m'

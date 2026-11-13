@@ -4,12 +4,14 @@
 
 ## Test private service access
 
-The [private Storage test](../infra/tests/private-storage.bicep) creates a
-private-only storage account and test container. It references the existing
-sandbox VNet and adds a separate, non-delegated endpoint subnet, private DNS,
-and container-scoped Blob Data Reader access for the supplied user. Deploy it
-separately from the main template; review the subnet range and existing DNS zones
-before applying it.
+Use a BYO-backed workspace from the [storage example](../infra/parameters/storage.example.bicepparam)
+and the normal [deployment flow](infrastructure.md#deploy). Its Storage account,
+private endpoint, and DNS come from the shared provisioning modules.
+
+Find the account and container in the deployment's
+`workspaceSettings.workspaces[].storage.storageContainerResourceId`.
+The user running this test needs Blob Data Reader access to that container;
+normal provisioning grants the group identity access, not your personal account.
 
 Connect through VS Code, then run in its remote terminal:
 
@@ -17,12 +19,12 @@ Connect through VS Code, then run in its remote terminal:
 az login --use-device-code
 getent hosts STORAGE_ACCOUNT.blob.core.windows.net
 az storage blob list --subscription SUBSCRIPTION \
-  --account-name STORAGE_ACCOUNT --container-name connectivity-test \
+  --account-name STORAGE_ACCOUNT --container-name CONTAINER_NAME \
   --auth-mode login --output json
 ```
 
-DNS must resolve to the private endpoint's IP, and listing the empty container
-must succeed with `[]`. Repeat the listing from a laptop without private network
+DNS must resolve to the private endpoint's IP, and listing must succeed
+(`[]` for an empty container). Repeat the listing from a laptop without private network
 access, using the same identity: it should fail with a Storage network denial.
 A DNS result or `403` alone doesn't prove private access.
 
@@ -30,13 +32,12 @@ If the sandbox enforces an egress allowlist, include the storage account's blob
 hostname. This test proves Blob HTTPS access only, not connectivity to every
 private service or protocol.
 
-The live PoC passed an authenticated container listing through the sandbox and
-rejected the same credential over the local public path. Repeat through your
-VS Code terminal to verify your editor connection end to end.
+Validate Blob mounts, home-directory bootstrap, read/write access, and persistence
+in Azure before customer use. Local checks don't prove service acceptance.
 
-Private endpoints incur charges. After testing, remove only the test endpoint,
-storage account, test DNS resources, and endpoint subnet; keep the sandbox
-group, developer disks, original subnet, and NSG.
+Private endpoints incur charges. Use a disposable environment for destructive
+tests; don't delete shared storage, developer volumes, or the shared endpoint
+subnet as test cleanup.
 
 ## Validate customer readiness
 

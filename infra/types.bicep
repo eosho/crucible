@@ -18,6 +18,9 @@ type ExistingSandboxSubnet = {
   @description('Existing empty, delegated subnet ARM ID in this subscription and region.')
   @minLength(1)
   subnetId: string
+  @description('Optional non-delegated subnet to create in the same VNet.')
+  privateEndpointSubnetName: string?
+  privateEndpointSubnetAddressPrefix: string?
 }
 
 @sealed()
@@ -33,10 +36,13 @@ type ExistingSandboxVirtualNetwork = {
   virtualNetworkName: string
   @description('Dedicated subnet name; must not identify an unrelated existing subnet.')
   @minLength(1)
-  subnetName: string
+  acaSubnetName: string
   @description('Unused IPv4 CIDR inside the existing VNet address space.')
   @minLength(1)
-  subnetAddressPrefix: string
+  acaSubnetAddressPrefix: string
+  @description('Optional non-delegated subnet to create alongside the sandbox subnet.')
+  privateEndpointSubnetName: string?
+  privateEndpointSubnetAddressPrefix: string?
 }
 
 @sealed()
@@ -52,10 +58,13 @@ type NewSandboxVirtualNetwork = {
   addressPrefix: string
   @description('Resource name for the delegated sandbox subnet.')
   @minLength(1)
-  subnetName: string
+  acaSubnetName: string
   @description('Dedicated IPv4 CIDR inside addressPrefix; /23 is a recommended starting point.')
   @minLength(1)
-  subnetAddressPrefix: string
+  acaSubnetAddressPrefix: string
+  @description('Optional shared, non-delegated private-endpoint subnet inside addressPrefix.')
+  privateEndpointSubnetName: string?
+  privateEndpointSubnetAddressPrefix: string?
 }
 
 @export()
@@ -65,13 +74,43 @@ type SandboxNetworkConfig = ExistingSandboxSubnet | ExistingSandboxVirtualNetwor
 
 @export()
 @sealed()
-@description('Additive workspace inventory entry: a stable developer workspace and its dedicated persistent disk.')
+@description('Additive workspace inventory entry with storage mounted at /workspaces.')
 type WorkspaceDefinition = {
   @description('Stable workspace name. Use 2-32 lowercase letters, digits, or hyphens.')
   @minLength(2)
   @maxLength(32)
   name: string
-  @description('Persistent Data Disk size, such as 20Gi. Existing disks are never resized.')
+  storage: WorkspaceStorage
+}
+
+@sealed()
+type WorkspaceDataDiskStorage = {
+  type: 'DataDisk'
+  @description('Persistent disk size, such as 20Gi. Existing disks are never resized.')
   @minLength(1)
-  diskSize: string
+  size: string
+}
+
+@sealed()
+type WorkspaceManagedBlobStorage = {
+  type: 'AzureBlob'
+  readOnly: bool
+}
+
+@sealed()
+type WorkspaceCustomerBlobStorage = {
+  type: 'AzureBlobByo'
+  readOnly: bool
+}
+
+@export()
+@discriminator('type')
+type WorkspaceStorage = WorkspaceDataDiskStorage | WorkspaceManagedBlobStorage | WorkspaceCustomerBlobStorage
+
+@export()
+@sealed()
+@description('Optional settings for private customer-owned Blob storage; an empty object retains resources after removing BYO workspaces.')
+type WorkspaceBlobStorageConfig = {
+  @description('Optional existing Blob private DNS zone already linked or forwarded to the sandbox VNet. Omit to create a zone and VNet link.')
+  privateDnsZoneResourceId: string?
 }
