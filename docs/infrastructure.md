@@ -56,28 +56,13 @@ param network = {
 }
 ```
 
-The private-endpoint fields are optional unless BYO Blob storage is used.
-Bicep creates that subnet without delegation, separately from the ACA subnet.
-Both CIDRs must fit the VNet and must not overlap. For `existingSubnet`, retain
-`subnetId` and add the private-endpoint fields to create a separate subnet in
-the same VNet.
+- Use the sandbox group's subscription and region, with approved, non-overlapping
+  subnet ranges inside the VNet.
+- BYO Blob needs both private-endpoint fields for a separate, non-delegated subnet.
+- For `existingVnet`, specify the VNet's resource group and grant deployment access.
 
-Use the sandbox group's subscription and region, with customer-approved CIDRs.
-For `existingVnet`, supply the VNet's resource group and give the deployment
-identity access to it. Creation leaves unrelated subnets alone, so choose a
-dedicated subnet name.
-
-Review network changes before redeploying. `newVnet` and `existingVnet` manage
-subnet properties. If Azure has attached an NSG that isn't in the template,
-redeploying can remove that association. Use `existingSubnet` to leave the
-network configuration alone. The CLI's promise to preserve existing workspaces
-doesn't protect against ARM network changes.
-
-The customer manages routing, corporate DNS forwarding, private endpoints,
-firewalls, and peering. A VNet connection alone doesn't establish an egress
-allowlist or prove that private services are reachable. Crucible doesn't
-provision public ingress or an SSH server. A group storage identity is optional
-and disabled by default.
+Configure customer routing, DNS forwarding, firewalls, and peering separately.
+VNet injection alone doesn't restrict outbound access.
 
 ## Grant access
 
@@ -130,6 +115,9 @@ workspaces before retrying, and allow time for new role assignments to propagate
 
 ## Redeploy safely
 
+- Review network changes with `--what-if`: `newVnet` and `existingVnet` can remove
+  Azure-attached NSG associations absent from the template. Use `existingSubnet`
+  to preserve the existing sandbox subnet's configuration.
 - Use distinct `--deployment` names per environment within a subscription
   (default: `crucible`). Use the same name for all workspace commands.
 - Workspace commands require subscription-level deployment outputs and a

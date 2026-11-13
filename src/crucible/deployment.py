@@ -6,12 +6,11 @@ import shlex
 import shutil
 import subprocess
 from collections.abc import Sequence
-from ipaddress import IPv4Network
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
 
-from .models import Arguments, WorkspaceError, WorkspaceSettings, is_array, is_record
+from .models import Arguments, WorkspaceError, WorkspaceSettings, is_record
 
 LOGGER = logging.getLogger(__name__)
 
@@ -79,7 +78,6 @@ def deploy(args: Arguments) -> None:
     if not is_record(inputs) or not isinstance(region, str) or not region:
         message = "Set an explicit location in the Bicep parameter file"
         raise ValueError(message)
-    validate_deployment_storage(template, inputs)
     exists = cast(
         "object",
         json.loads(
@@ -151,91 +149,6 @@ def read_json_object(text: str) -> dict[str, object]:
         message = "Azure CLI returned an invalid JSON object"
         raise ValueError(message)
     return value
-
-
-def validate_deployment_storage(template: str, inputs: dict[str, object]) -> None:
-    """Validate storage inputs before ARM can attach identities or grant access.
-
-    Args:
-        template: Compiled Bicep template JSON.
-        inputs: Compiled parameter values.
-
-    Raises:
-        WorkspaceError: The template or parameter shapes are incompatible.
-        ValueError: Workspace storage or network settings conflict.
-    """
-    parameters = read_json_object(template).get("parameters")
-    if not is_record(parameters):
-        message = "Compiled Bicep template requires parameter definitions"
-        raise WorkspaceError(message)
-    values: dict[str, object] = {}
-    for name in ("workspaces", "workspaceBlobStorage", "network"):
-        definition = parameters.get(name)
-        supplied = inputs.get(name)
-        if supplied is not None and is_record(supplied) and "value" in supplied:
-            values[name] = supplied["value"]
-        elif (
-            supplied is None
-            and is_record(definition)
-            and ("defaultValue" in definition or definition.get("nullable") is True)
-        ):
-            values[name] = definition.get("defaultValue")
-        else:
-            message = f"Cannot read compiled Bicep parameter {name}"
-            raise WorkspaceError(message)
-    workspaces = values["workspaces"]
-    if not is_array(workspaces):
-        message = "Workspaces must be an array"
-        raise ValueError(message)
-    requires_endpoint = values["workspaceBlobStorage"] is not None
-    for workspace in workspaces:
-        storage = workspace.get("storage") if is_record(workspace) else None
-        if not is_record(storage):
-            message = "Each workspace requires a storage object"
-            raise ValueError(message)
-        requires_endpoint = requires_endpoint or storage.get("type") == "AzureBlobByo"
-    validate_private_endpoint_network(values["network"], required=requires_endpoint)
-
-
-def validate_private_endpoint_network(value: object, *, required: bool) -> None:
-    """Check that the optional private-endpoint subnet is separate and inside a new VNet.
-
-    Args:
-        value: Compiled network configuration.
-        required: Whether private Blob storage needs the subnet.
-
-    Raises:
-        ValueError: The subnet fields are incomplete, overlap, or fall outside the VNet.
-    """
-    if not is_record(value):
-        message = "Deployment requires a network object"
-        raise ValueError(message)
-    name = value.get("privateEndpointSubnetName")
-    prefix = value.get("privateEndpointSubnetAddressPrefix")
-    if name is None and prefix is None and not required:
-        return
-    if not isinstance(name, str) or not name or not isinstance(prefix, str) or not prefix:
-        message = "Set network.privateEndpointSubnetName and privateEndpointSubnetAddressPrefix"
-        raise ValueError(message)
-    endpoint = IPv4Network(prefix)
-    if value.get("mode") == "newVnet":
-        address_prefix = value.get("addressPrefix")
-        if not isinstance(address_prefix, str) or not endpoint.subnet_of(
-            IPv4Network(address_prefix)
-        ):
-            message = "Private-endpoint subnet must be inside network.addressPrefix"
-            raise ValueError(message)
-    aca_name = value.get("acaSubnetName")
-    aca_prefix = value.get("acaSubnetAddressPrefix")
-    if value.get("mode") == "existingSubnet":
-        subnet_id = value.get("subnetId")
-        aca_name = subnet_id.rsplit("/", 1)[-1] if isinstance(subnet_id, str) else None
-    if name == aca_name:
-        message = "Private endpoints require a separate, non-delegated subnet"
-        raise ValueError(message)
-    if isinstance(aca_prefix, str) and endpoint.overlaps(IPv4Network(aca_prefix)):
-        message = "Private-endpoint and ACA subnet ranges must not overlap"
-        raise ValueError(message)
 
 
 def load_workspace_settings(args: Arguments) -> WorkspaceSettings:

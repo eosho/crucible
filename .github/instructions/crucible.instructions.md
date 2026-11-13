@@ -31,8 +31,9 @@ Apps Sandboxes. Use Python 3.12+, uv, argparse, and Bicep.
 
 ## Checks and documentation
 
-- Run focused tests for changed behavior. Don't duplicate Azure resource-schema
-  validation in tests.
+- Focus tests on deployment flow, storage payloads, workspace safety, bootstrap,
+  and lifecycle actions. Avoid exhaustive type permutations, framework behavior,
+  and duplicate Azure resource-schema validation.
 - Use `uv run --locked ruff check .`, `uv run --locked ruff format --check .`,
   `uv run --locked basedpyright src/crucible`, and `uv run --locked pytest`.
 - Compile changed Bicep and affected parameter examples with Azure CLI. Don't

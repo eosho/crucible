@@ -107,7 +107,7 @@ uv run crucible workspace auto-suspend --subscription SUBSCRIPTION \
 # Repeat with --apply. Use --enable to restore idle suspension.
 ```
 
-The command preserves the current timeout, Disk mode, and auto-delete policy.
+The command preserves the current timeout, suspension mode, and auto-delete policy.
 The [official SDK lifecycle sample](https://github.com/Azure-Samples/azure-container-apps-sandboxes/blob/main/python/labs/01-getting-started.ipynb)
 uses the same lifecycle API. Provisioning and default-setting changes leave
 existing workspace policies alone.

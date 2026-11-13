@@ -26,6 +26,7 @@ from .deployment import load_workspace_settings
 from .models import (
     WORKSPACE_NAME,
     Arguments,
+    VolumeType,
     WorkspaceDefinition,
     WorkspaceError,
     WorkspaceSettings,
@@ -114,13 +115,6 @@ def configure_auto_suspend(sandbox: SandboxClient, *, enabled: bool, apply: bool
             "Workspace lifecycle policy is incomplete; inspect it before changing auto-suspend"
         )
         raise WorkspaceError(message)
-    if (
-        policy.auto_suspend.mode != "Disk"
-        or policy.auto_suspend.interval is None
-        or policy.auto_suspend.interval < 1
-    ):
-        message = "Workspace requires a Disk suspension policy with a positive idle interval"
-        raise WorkspaceError(message)
     desired = replace(policy, auto_suspend=replace(policy.auto_suspend, enabled=enabled))
     updated = sandbox.set_lifecycle_policy(desired)
     if updated.auto_suspend is None or updated.auto_suspend.enabled != enabled:
@@ -153,12 +147,14 @@ def validate_existing_workspace(
         raise WorkspaceError(message)
     policy = sandbox.lifecycle
     if (
-        volume.type not in ("DataDisk", "AzureBlob", "AzureBlobByo")
+        volume.type not in VolumeType
         or volume.is_attached is not True
         or sandbox.state not in ("Running", "Stopped")
         or policy is None
-        or policy.auto_suspend is None
-        or policy.auto_suspend.mode != "Disk"
+        or (
+            volume.type == VolumeType.DATA_DISK
+            and (policy.auto_suspend is None or policy.auto_suspend.mode != "Disk")
+        )
         or policy.auto_delete is None
         or policy.auto_delete.enabled
     ):
@@ -180,11 +176,11 @@ def create_workspace_volume(client: SandboxGroupClient, workspace: WorkspaceDefi
     storage = workspace.storage
     _ = client.create_volume(
         workspace.volume_name,
-        type=storage.type,
+        type=storage.type.value,
         size=storage.size,
         labels={"managed-by": "crucible", "workspace": workspace.name},
         storage_container_resource_id=storage.storage_container_resource_id,
-        auth=AzureBlobByoManagedIdentityAuth() if storage.type == "AzureBlobByo" else None,
+        auth=AzureBlobByoManagedIdentityAuth() if storage.type == VolumeType.BYO_BLOB else None,
     )
 
 
@@ -197,19 +193,13 @@ def validate_volume_for_creation(volume: Volume, *, read_only: bool) -> None:
 
     Raises:
         WorkspaceError: Storage is unsupported or an exclusive disk is attached or read-only.
-        ValueError: Existing BYO authentication is invalid.
     """
-    if volume.type not in ("DataDisk", "AzureBlob", "AzureBlobByo"):
+    if volume.type not in VolumeType:
         message = "Creation requires a DataDisk, AzureBlob, or AzureBlobByo volume"
         raise WorkspaceError(message)
-    if volume.type == "DataDisk" and (volume.is_attached is not False or read_only):
+    if volume.type == VolumeType.DATA_DISK and (volume.is_attached is not False or read_only):
         message = "DataDisk creation requires an unattached, writable dedicated disk"
         raise WorkspaceError(message)
-    if volume.type == "AzureBlobByo":
-        if not volume.storage_container_resource_id or volume.auth is None:
-            message = "BYO Blob volume is missing its container or managed-identity authentication"
-            raise WorkspaceError(message)
-        volume.auth.validate()
 
 
 def provision_workspaces(

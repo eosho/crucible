@@ -69,8 +69,16 @@ param tags object = {
 
 var customerBlobWorkspaces = filter(workspaces, workspace => workspace.storage.type == 'AzureBlobByo')
 var workspaceBlobEnabled = !empty(customerBlobWorkspaces) || workspaceBlobStorage != null
-var privateEndpointSubnetName = network.?privateEndpointSubnetName ?? ''
+var configuredPrivateEndpointSubnetName = network.?privateEndpointSubnetName ?? ''
 var privateEndpointSubnetAddressPrefix = network.?privateEndpointSubnetAddressPrefix ?? ''
+var acaSubnetName = network.mode == 'existingSubnet' ? last(split(network.subnetId, '/')) : network.acaSubnetName
+var privateEndpointSubnetRequired = workspaceBlobEnabled || !empty(configuredPrivateEndpointSubnetName) || !empty(privateEndpointSubnetAddressPrefix)
+var requiredPrivateEndpointSubnetName = privateEndpointSubnetRequired && (empty(configuredPrivateEndpointSubnetName) || empty(privateEndpointSubnetAddressPrefix))
+  ? fail('Set network.privateEndpointSubnetName and privateEndpointSubnetAddressPrefix for private storage.')
+  : configuredPrivateEndpointSubnetName
+var privateEndpointSubnetName = !empty(requiredPrivateEndpointSubnetName) && toLower(requiredPrivateEndpointSubnetName) == toLower(acaSubnetName)
+  ? fail('Private endpoints require a separate, non-delegated subnet from the ACA subnet.')
+  : requiredPrivateEndpointSubnetName
 
 resource targetGroup 'Microsoft.Resources/resourceGroups@2025-04-01' = if (createResourceGroup) {
   name: resourceGroupName
@@ -207,7 +215,6 @@ output workspaceSettings object = {
   idleTimeoutSeconds: workspaceIdleTimeoutSeconds
   autoSuspendEnabled: workspaceAutoSuspendEnabled
   bootstrapTools: workspaceBootstrapTools
-  storageIdentityEnabled: workspaceBlobEnabled
   image: workspaceImage
   workspaces: map(workspaces, workspace => {
     name: workspace.name
