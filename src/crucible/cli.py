@@ -11,7 +11,7 @@ from typing import cast
 from azure.core.exceptions import AzureError
 
 from . import __version__
-from .deployment import deploy
+from .deployment import deploy, destroy
 from .models import Arguments
 from .workspaces import run_workspace
 
@@ -44,6 +44,19 @@ def build_parser() -> argparse.ArgumentParser:
         "--apply", action="store_true", help="Deploy infrastructure and workspaces"
     )
     _ = mode.add_argument("--what-if", action="store_true", help="Preview ARM changes only")
+    destroy_parser = commands.add_parser(
+        "destroy", help="Permanently delete a dedicated resource group and ALL its resources"
+    )
+    destroy_parser.set_defaults(action="destroy")
+    _ = destroy_parser.add_argument(
+        "--subscription", required=True, help="Customer subscription ID"
+    )
+    _ = destroy_parser.add_argument(
+        "--resource-group", required=True, help="Dedicated group to delete"
+    )
+    _ = destroy_parser.add_argument(
+        "--apply", action="store_true", help="Delete the group rather than only list its resources"
+    )
     workspace = commands.add_parser(
         "workspace", help="Operate sessions using deployed Bicep settings"
     )
@@ -118,6 +131,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             if args.apply:
                 args.action = "provision"
                 run_workspace(args)
+        elif args.action == "destroy":
+            destroy(args)
         else:
             run_workspace(args)
     except subprocess.CalledProcessError as error:

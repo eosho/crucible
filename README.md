@@ -153,6 +153,19 @@ uv run crucible deploy --subscription SUBSCRIPTION --resource-group RESOURCE_GRO
 Use either `--what-if` or `--apply`, never both. Provisioning leaves existing
 workspaces alone, without rebuilding or deleting them.
 
+### Destroy
+
+For a dedicated resource group, review the target and its resources:
+
+```bash
+uv run crucible destroy --subscription SUBSCRIPTION --resource-group RESOURCE_GROUP
+```
+
+Add `--apply` to permanently delete the group and
+**everything inside it**, including workspace data and Storage. This is not
+limited to Crucible-managed resources. Back up your work first.
+See [destruction scope](docs/infrastructure.md#destroy) before applying.
+
 ### Workspaces
 
 Workspace commands need settings from a successful subscription deployment.

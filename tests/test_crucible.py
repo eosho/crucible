@@ -56,6 +56,7 @@ class CliTests(unittest.TestCase):
              "storageContainerResourceId": self.container_id},
         ]
         self.group_exists = True
+        self.deleted_group = False
         self.deployed_inputs = None
         self.run = self.enterContext(patch.object(
             deployment.subprocess, "run", side_effect=self.azure_response,
@@ -76,8 +77,18 @@ class CliTests(unittest.TestCase):
                 "templateJson": json.dumps({"$schema": "subscriptionDeploymentTemplate.json"}),
                 "parametersJson": json.dumps({"parameters": {"location": {"value": "eastus"}}}),
             }
+        elif command[1:3] == ["group", "show"]:
+            group_id = "/subscriptions/test-subscription/resourceGroups/test-group"
+            return subprocess.CompletedProcess(command, 0, stdout=group_id + "\n")
+        elif command[1:3] == ["resource", "list"]:
+            return subprocess.CompletedProcess(
+                command, 0, stdout="Name          Type\nsandbox       Microsoft.App/sandboxGroups\n",
+            )
+        elif command[1:3] == ["group", "delete"]:
+            self.deleted_group = True
+            return subprocess.CompletedProcess(command, 0)
         elif command[1:3] == ["group", "exists"]:
-            value = self.group_exists
+            value = False if self.deleted_group else self.group_exists
         elif command[1:4] in (["deployment", "sub", "create"], ["deployment", "sub", "what-if"]):
             parameter_path = command[command.index("--parameters") + 1].removeprefix("@")
             self.deployed_inputs = json.loads(Path(parameter_path).read_text())["parameters"]
@@ -148,6 +159,62 @@ class CliTests(unittest.TestCase):
         self.constructor.assert_not_called()
         self.assert_no_mutations()
 
+    def test_destroy_preview_is_read_only(self):
+        messages = io.StringIO()
+        with contextlib.redirect_stderr(messages):
+            self.assertEqual(cli.main(["destroy", *self.scope]), 0)
+        self.assertIn("ALL resources and workspace data", messages.getvalue())
+        self.assertIn("sandbox", messages.getvalue())
+        self.assertEqual(
+            [call.args[0][1:3] for call in self.run.call_args_list],
+            [["group", "show"], ["resource", "list"]],
+        )
+        self.assertFalse(self.deleted_group)
+        self.constructor.assert_not_called()
+        self.assert_no_mutations()
+
+    def test_destroy_apply_deletes_only_the_target_group_and_verifies_completion(self):
+        self.assertEqual(self.invoke("destroy", "--apply"), 0)
+        calls = [call.args[0] for call in self.run.call_args_list]
+        self.assertEqual([command[1:3] for command in calls], [
+            ["group", "show"], ["resource", "list"],
+            ["group", "delete"], ["group", "exists"],
+        ])
+        self.assertIn("--yes", calls[2])
+        self.assertNotIn("--no-wait", calls[2])
+        for command in calls:
+            self.assertEqual(command[command.index("--subscription") + 1], "test-subscription")
+            self.assertEqual(command[command.index("--resource-group") + 1], "test-group")
+        self.assertTrue(self.deleted_group)
+        self.constructor.assert_not_called()
+
+    def test_destroy_reports_failed_or_unconfirmed_deletion(self):
+        for failure in ("delete", "verification"):
+            with self.subTest(failure=failure):
+                self.deleted_group = False
+                self.run.reset_mock()
+                def azure_failure(command, **kwargs):
+                    if failure == "delete" and command[1:3] == ["group", "delete"]:
+                        raise subprocess.CalledProcessError(
+                            1, command, stderr="Resource group is locked",
+                        )
+                    if failure == "verification" and command[1:3] == ["group", "exists"]:
+                        return subprocess.CompletedProcess(command, 0, stdout="true")
+                    return self.azure_response(command, **kwargs)
+                self.run.side_effect = azure_failure
+                messages = io.StringIO()
+                with contextlib.redirect_stderr(messages):
+                    self.assertEqual(cli.main([
+                        "destroy", *self.scope, "--apply",
+                    ]), 1)
+                self.assertNotIn("Deleted resource group", messages.getvalue())
+                if failure == "delete":
+                    self.assertFalse(self.deleted_group)
+                    self.assertIn("locked", messages.getvalue())
+                else:
+                    self.assertIn("not confirmed", messages.getvalue())
+        self.constructor.assert_not_called()
+
     def test_scope_mismatch_and_duplicate_inventory_fail_before_sdk_calls(self):
         self.settings["resourceGroup"] = "another-group"
         self.assertEqual(self.invoke("workspace provision", "--apply"), 1)
@@ -201,7 +268,7 @@ class CliTests(unittest.TestCase):
             with self.subTest(volume_type=volume_type):
                 self.client.list_volumes.return_value = [
                     Volume(name="alice-dev-data", type=volume_type, size="20Gi",
-                           is_attached=True, labels=labels)
+                           is_attached=True if volume_type == "DataDisk" else None, labels=labels)
                 ]
                 self.client.list_sandboxes.return_value = [
                     Sandbox(id="existing", state="Stopped",
@@ -220,11 +287,19 @@ class CliTests(unittest.TestCase):
     def test_inventory_conflicts_abort_the_batch_before_any_creation(self):
         self.declare_workspaces()
         labels = {"managed-by": "someone-else", "workspace": "bob-dev"}
+        owned = {"managed-by": "crucible", "workspace": "bob-dev"}
         for volumes, sandboxes in (
             ([Volume(name="bob-dev-data", type="DataDisk", is_attached=False)], []),
             ([], [Sandbox(labels={"name": "bob-dev"})] * 2),
             ([Volume(name="bob-dev-data", type="DataDisk", is_attached=True, labels=labels)],
              [Sandbox(labels=labels | {"name": "bob-dev", "volume": "bob-dev-data"})]),
+            ([Volume(name="bob-dev-data", type="DataDisk", is_attached=False, labels=owned)],
+             [Sandbox(state="Stopped",
+                      labels=owned | {"name": "bob-dev", "volume": "bob-dev-data"},
+                      lifecycle=LifecyclePolicy(
+                          auto_suspend=AutoSuspendPolicy(mode="Disk"),
+                          auto_delete=AutoDeletePolicy(enabled=False),
+                      ))]),
         ):
             with self.subTest(volumes=volumes, sandboxes=sandboxes):
                 self.client.list_volumes.return_value = volumes
